@@ -44,6 +44,13 @@
       <span id="reading-estimate" class="reading-estimate"></span>
 
       <div class="font-controls">
+        {% if not book.single_narrator_mode %}
+        <button class="btn btn-sm btn-ghost speaker-edit-toggle"
+                id="speaker-edit-toggle" onclick="toggleSpeakerEditMode()"
+                title="Review and correct dialogue speakers">
+          Edit speakers
+        </button>
+        {% endif %}
         <button class="btn btn-sm btn-ghost" onclick="changeFontSize(-1)" title="Smaller text">A&#8722;</button>
         <button class="btn btn-sm btn-ghost" onclick="changeFontSize(1)" title="Larger text">A+</button>
         <button class="btn btn-sm btn-ghost" id="theme-cycle-btn" onclick="cycleTheme()" title="Cycle theme (T)">&#9675;</button>
@@ -52,6 +59,24 @@
         <button class="btn btn-sm btn-ghost" id="shortcuts-btn" onclick="showShortcuts()" title="Keyboard shortcuts (?)">?</button>
       </div>
     </div>
+
+    {% if not book.single_narrator_mode %}
+    <div class="speaker-edit-banner hidden" id="speaker-edit-banner">
+      <div>
+        <strong>Speaker review</strong>
+        <span>Each shaded row is one spoken sentence. Change a speaker inline; changes save immediately.</span>
+      </div>
+      <label class="speaker-turn-scope" for="speaker-turn-scope">
+        Change
+        <select id="speaker-turn-scope">
+          <option value="turn_tail" selected>This sentence and the rest of the turn</option>
+          <option value="sentence">This sentence only</option>
+          <option value="turn">The whole dialogue turn</option>
+        </select>
+      </label>
+      <button class="btn btn-sm btn-ghost" onclick="toggleSpeakerEditMode()">Done</button>
+    </div>
+    {% endif %}
 
     <div class="chapter-progress-bar" id="chapter-progress-bar">
       <div class="chapter-progress-fill" id="chapter-progress-fill" style="width:0%"></div>
@@ -71,6 +96,40 @@
     <div id="bookmark-list" class="bookmark-list"></div>
   </aside>
 
+</div>
+
+<!-- Speaker correction dialog -->
+<div class="modal-overlay hidden" id="speaker-editor-overlay"
+     onclick="closeSpeakerEditor()">
+  <div class="modal speaker-editor" role="dialog" aria-modal="true"
+       aria-labelledby="speaker-editor-title" onclick="event.stopPropagation()">
+    <div class="modal-title" id="speaker-editor-title">Who speaks this line?</div>
+    <div class="speaker-editor-quote" id="speaker-editor-quote"></div>
+    <label class="speaker-editor-label" for="speaker-editor-select">Speaker</label>
+    <select id="speaker-editor-select" class="select-input"
+            onchange="toggleNewSpeakerInput()"></select>
+    <div id="speaker-editor-new-wrap" class="hidden">
+      <label class="speaker-editor-label" for="speaker-editor-new">New character name</label>
+      <input id="speaker-editor-new" class="text-input" type="text"
+             maxlength="100" autocomplete="off" placeholder="Character name">
+    </div>
+    <p class="speaker-editor-help">
+      The correction is saved for this line and will be used for playback and export.
+    </p>
+    <label class="speaker-editor-scope" for="speaker-editor-scope">
+      Apply this correction to
+      <select id="speaker-editor-scope">
+        <option value="turn_tail" selected>This sentence and the rest of the turn</option>
+        <option value="sentence">This sentence only</option>
+        <option value="turn">The whole dialogue turn</option>
+      </select>
+    </label>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSpeakerEditor()">Cancel</button>
+      <button class="btn btn-primary" id="speaker-editor-save"
+              onclick="saveSpeakerCorrection()">Save speaker</button>
+    </div>
+  </div>
 </div>
 
 <!-- Playback bar -->

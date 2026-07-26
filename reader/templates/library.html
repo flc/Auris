@@ -13,6 +13,45 @@
     <div class="loading-spinner">Loading library…</div>
   </div>
 </div>
+
+<div class="modal-overlay hidden" id="import-dialog" onclick="closeImportDialog()">
+  <div class="modal import-dialog" role="dialog" aria-modal="true"
+       aria-labelledby="import-dialog-title" onclick="event.stopPropagation()">
+    <div class="modal-title" id="import-dialog-title">Import book</div>
+    <div class="import-file-summary">
+      <div class="import-file-icon" id="import-file-type">BOOK</div>
+      <div>
+        <strong id="import-file-name"></strong>
+        <span id="import-file-size"></span>
+      </div>
+    </div>
+
+    <fieldset class="narration-choice">
+      <legend>How should this book be narrated?</legend>
+      <label class="narration-option">
+        <input type="radio" name="narration-mode" value="single" checked>
+        <span>
+          <strong>One narrator</strong>
+          <small>Use one voice for the whole book. No character analysis.</small>
+        </span>
+      </label>
+      <label class="narration-option">
+        <input type="radio" name="narration-mode" value="multi">
+        <span>
+          <strong>Character voices</strong>
+          <small>Analyze dialogue with your configured local language model, then review and correct speakers.</small>
+        </span>
+      </label>
+    </fieldset>
+
+    <div class="import-model-note" id="import-model-note"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" type="button" onclick="closeImportDialog()">Cancel</button>
+      <button class="btn btn-primary" type="button" id="confirm-import-btn"
+              onclick="confirmImport()">Import book</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script src="/static/js/library.js"></script>

@@ -83,6 +83,7 @@ def init_db():
             unit_text     TEXT NOT NULL,
             speaker_name  TEXT NOT NULL,
             confidence    REAL DEFAULT 0,
+            source        TEXT DEFAULT 'automatic',
             UNIQUE(chapter_id, unit_index)
         );
 
@@ -106,7 +107,9 @@ def init_db():
             is_dialogue   INTEGER DEFAULT 0,
             audio_path    TEXT,
             duration_sec  REAL,
-            cache_key     TEXT UNIQUE
+            cache_key     TEXT UNIQUE,
+            unit_index    INTEGER,
+            speaker_candidate INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS bookmarks (
@@ -160,6 +163,16 @@ def init_db():
         if "ref_text" not in char_cols:
             conn.execute("ALTER TABLE characters ADD COLUMN ref_text TEXT")
 
+        annotation_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(speaker_annotations)").fetchall()
+        }
+        if "source" not in annotation_cols:
+            conn.execute(
+                "ALTER TABLE speaker_annotations "
+                "ADD COLUMN source TEXT DEFAULT 'automatic'"
+            )
+
     # Remove UNIQUE constraint from tts_segments.cache_key so identical sentences
     # in different chapters don't cause INSERT OR IGNORE to silently drop segments.
     import sqlite3 as _sqlite3
@@ -187,9 +200,18 @@ def init_db():
                     is_dialogue   INTEGER DEFAULT 0,
                     audio_path    TEXT,
                     duration_sec  REAL,
-                    cache_key     TEXT
+                    cache_key     TEXT,
+                    unit_index    INTEGER,
+                    speaker_candidate INTEGER DEFAULT 0
                 );
-                INSERT INTO tts_segments_new SELECT * FROM tts_segments;
+                INSERT INTO tts_segments_new
+                    (id, book_id, chapter_id, segment_index, text, enriched_text,
+                     character_name, instruct, speed, is_dialogue, audio_path,
+                     duration_sec, cache_key)
+                SELECT id, book_id, chapter_id, segment_index, text, enriched_text,
+                       character_name, instruct, speed, is_dialogue, audio_path,
+                       duration_sec, cache_key
+                FROM tts_segments;
                 DROP TABLE tts_segments;
                 ALTER TABLE tts_segments_new RENAME TO tts_segments;
                 PRAGMA foreign_keys=ON;
@@ -200,3 +222,16 @@ def init_db():
         )
     finally:
         _mc.close()
+
+    with get_conn() as conn:
+        segment_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(tts_segments)").fetchall()
+        }
+        if "unit_index" not in segment_cols:
+            conn.execute("ALTER TABLE tts_segments ADD COLUMN unit_index INTEGER")
+        if "speaker_candidate" not in segment_cols:
+            conn.execute(
+                "ALTER TABLE tts_segments "
+                "ADD COLUMN speaker_candidate INTEGER DEFAULT 0"
+            )

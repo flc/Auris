@@ -35,6 +35,8 @@ async function loadBooks() {
           ? `<div class="book-progress-hint status-ok">${esc(b.character_analysis_message || 'Character analysis complete.')}</div>`
           : analysisState === 'partial'
             ? `<div class="book-progress-hint status-warn">${esc(b.character_analysis_message || 'Character analysis partially complete.')}</div>`
+            : analysisState === 'skipped'
+              ? `<div class="book-progress-hint">${esc(b.character_analysis_message || 'Single narrator — no character analysis.')}</div>`
           : '';
 
     return `
@@ -65,28 +67,76 @@ async function deleteBook(e, id) {
   loadBooks();
 }
 
-document.getElementById('file-input').addEventListener('change', async function() {
+let pendingImportFile = null;
+let importSettings = null;
+
+document.getElementById('file-input').addEventListener('change', function() {
   const file = this.files[0];
+  this.value = '';
   if (!file) return;
+  openImportDialog(file);
+});
+
+async function openImportDialog(file) {
+  pendingImportFile = file;
+  document.getElementById('import-file-name').textContent = file.name;
+  document.getElementById('import-file-size').textContent = formatFileSize(file.size);
+  document.getElementById('import-file-type').textContent =
+    (file.name.split('.').pop() || 'BOOK').toUpperCase();
+  document.querySelector('input[name="narration-mode"][value="single"]').checked = true;
+  document.getElementById('import-dialog').classList.remove('hidden');
+
+  try {
+    importSettings = await fetch('/api/settings').then(r => r.json());
+    const configured = Boolean(importSettings.llm_base_url && importSettings.llm_model);
+    const note = document.getElementById('import-model-note');
+    note.className = `import-model-note ${configured ? 'ready' : 'warning'}`;
+    note.textContent = configured
+      ? `Character analysis model: ${importSettings.llm_model}`
+      : 'Character voices require a local language model in Settings.';
+  } catch (_) {
+    document.getElementById('import-model-note').textContent =
+      'Could not read language-model settings.';
+  }
+}
+
+function closeImportDialog() {
+  document.getElementById('import-dialog').classList.add('hidden');
+  pendingImportFile = null;
+}
+
+async function confirmImport() {
+  const file = pendingImportFile;
+  if (!file) return;
+  const mode = document.querySelector('input[name="narration-mode"]:checked').value;
+  const button = document.getElementById('confirm-import-btn');
   const status = document.getElementById('import-status');
   status.textContent = `Importing “${file.name}”…`;
   status.className = 'import-status';
   status.classList.remove('hidden');
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('narration_mode', mode);
+  button.disabled = true;
+  button.textContent = 'Importing…';
   try {
     const r = await fetch('/api/books/import', { method: 'POST', body: fd });
     const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    status.textContent = `“${d.title}” imported — ${d.chapters} sections. Analyzing characters and dialogue speakers…`;
+    if (!r.ok || d.error) throw new Error(d.error || 'Import failed');
+    closeImportDialog();
+    status.textContent = mode === 'multi'
+      ? `“${d.title}” imported — ${d.chapters} sections. Analyzing dialogue speakers…`
+      : `“${d.title}” imported — ${d.chapters} sections. Ready with one narrator.`;
     loadBooks();
-    pollCharacterAnalysis(d.book_id, status);
+    if (mode === 'multi') pollCharacterAnalysis(d.book_id, status);
   } catch(e) {
     status.textContent = e.message;
     status.className = 'import-status error';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Import book';
   }
-  this.value = '';
-});
+}
 
 async function pollCharacterAnalysis(bookId, statusEl) {
   for (;;) {
@@ -96,7 +146,7 @@ async function pollCharacterAnalysis(bookId, statusEl) {
       if (d.error) throw new Error(d.error);
       statusEl.textContent = d.message || 'Analyzing characters and dialogue speakers…';
       loadBooks();
-      if (d.status === 'complete') {
+      if (d.status === 'complete' || d.status === 'partial' || d.status === 'skipped') {
         statusEl.className = 'import-status';
         return;
       }
@@ -113,7 +163,14 @@ async function pollCharacterAnalysis(bookId, statusEl) {
 }
 
 function esc(s) {
-  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 loadBooks();

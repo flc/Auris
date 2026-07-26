@@ -219,7 +219,7 @@ def _compute_segments_for_chapter(book_id: int, chapter_id: int) -> list[dict]:
         return []
 
     char_map = {r['name']: dict(r) for r in chars}
-    use_llm_annotations = bool(
+    use_llm_annotations = bool(annotation_rows) or bool(
         book
         and book['character_analysis_status'] in ('complete', 'partial')
         and book['character_analysis_provider'] == 'llm'
@@ -228,6 +228,10 @@ def _compute_segments_for_chapter(book_id: int, chapter_id: int) -> list[dict]:
         {int(row['unit_index']): row['speaker_name'] for row in annotation_rows}
         if use_llm_annotations else None
     )
+    if speaker_annotations is not None:
+        speaker_annotations = enrichment.expand_speaker_annotations(
+            ch['content'], speaker_annotations
+        )
     segs = enrichment.enrich_chapter(
         ch['content'],
         char_map,
@@ -265,6 +269,10 @@ def _segments_match_rows(segs: list[dict], rows) -> bool:
         if round(float(row['speed'] or 1.0), 2) != round(float(seg['speed'] or 1.0), 2):
             return False
         if bool(row['is_dialogue']) != bool(seg['is_dialogue']):
+            return False
+        if row['unit_index'] != seg.get('unit_index'):
+            return False
+        if bool(row['speaker_candidate']) != bool(seg.get('speaker_candidate')):
             return False
 
     return True
@@ -344,6 +352,31 @@ def import_book():
     if ext not in ('epub', 'pdf', 'txt'):
         return jsonify({'error': f'Unsupported format: {ext}'}), 400
 
+    detection_config = app_settings.load()
+    requested_mode = str(request.form.get('narration_mode') or '').strip().lower()
+    if requested_mode == 'single':
+        detection_mode = 'none'
+        single_narrator_mode = True
+    elif requested_mode == 'multi':
+        detection_mode = 'llm'
+        single_narrator_mode = False
+        if not str(detection_config.get('llm_base_url') or '').strip():
+            return jsonify({
+                'error': 'Configure a local language-model URL before using character voices.'
+            }), 400
+        if not str(detection_config.get('llm_model') or '').strip():
+            return jsonify({
+                'error': 'Select a local language model before using character voices.'
+            }), 400
+    else:
+        # Backwards compatibility for API clients that predate the import dialog.
+        detection_mode = str(
+            detection_config.get('character_detection_mode', 'legacy') or 'legacy'
+        ).lower()
+        single_narrator_mode = bool(
+            detection_config.get('single_narrator_mode', False)
+        )
+
     dest = os.path.join(UPLOAD_DIR, f.filename)
     f.save(dest)
 
@@ -359,11 +392,11 @@ def import_book():
 
     chapters = structure.enrich_chapters(data['chapters'])
 
-    detection_config = app_settings.load()
-    detection_mode = str(
-        detection_config.get('character_detection_mode', 'legacy') or 'legacy'
-    ).lower()
-    analysis_status = 'queued' if detection_mode == 'llm' else 'running'
+    analysis_status = (
+        'queued' if detection_mode == 'llm'
+        else 'skipped' if detection_mode == 'none'
+        else 'running'
+    )
 
     with get_conn() as conn:
         cur = conn.execute(
@@ -373,9 +406,11 @@ def import_book():
             'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
             (data['title'], data['author'], dest, ext,
              data.get('cover_b64'), data.get('language', 'en'),
-             int(bool(app_settings.get('single_narrator_mode', False))), len(chapters),
+             int(single_narrator_mode), len(chapters),
              analysis_status, detection_mode,
-             detection_config.get('llm_model', '') if detection_mode == 'llm' else 'spaCy/regex')
+             detection_config.get('llm_model', '') if detection_mode == 'llm'
+             else 'single narrator' if detection_mode == 'none'
+             else 'spaCy/regex')
         )
         book_id = cur.lastrowid
 
@@ -393,14 +428,27 @@ def import_book():
         _character_analysis_reserve()
         tts.unload()
 
-    # Detect characters / attribute dialogue in the background.
-    threading.Thread(
-        target=_detect_characters,
-        args=(book_id, data, detection_mode, detection_config),
-        daemon=True,
-    ).start()
+    if detection_mode == 'none':
+        _set_character_analysis_status(
+            book_id,
+            'skipped',
+            'Single narrator selected — character analysis skipped.',
+        )
+    else:
+        # Detect characters / attribute dialogue in the background.
+        threading.Thread(
+            target=_detect_characters,
+            args=(book_id, data, detection_mode, detection_config),
+            daemon=True,
+        ).start()
 
-    return jsonify({'book_id': book_id, 'title': data['title'], 'chapters': len(chapters)})
+    return jsonify({
+        'book_id': book_id,
+        'title': data['title'],
+        'chapters': len(chapters),
+        'analysis_status': analysis_status,
+        'narration_mode': 'single' if single_narrator_mode else 'multi',
+    })
 
 
 def _detect_characters(
@@ -518,14 +566,28 @@ def _store_character_analysis(
     message: str,
 ) -> None:
     with get_conn() as conn:
-        conn.execute('DELETE FROM speaker_annotations WHERE book_id=?', (book_id,))
-        conn.execute('DELETE FROM characters WHERE book_id=?', (book_id,))
+        # Human decisions are durable overrides: re-running the automatic
+        # analysis must not erase either a corrected assignment or an explicit
+        # "this is narration" decision.
+        conn.execute(
+            "DELETE FROM speaker_annotations "
+            "WHERE book_id=? AND COALESCE(source, 'automatic') <> 'manual'",
+            (book_id,),
+        )
+        conn.execute(
+            "DELETE FROM characters WHERE book_id=? AND name NOT IN ("
+            "SELECT speaker_name FROM speaker_annotations "
+            "WHERE book_id=? AND source='manual' AND speaker_name <> ''"
+            ")",
+            (book_id, book_id),
+        )
         conn.execute('DELETE FROM tts_segments WHERE book_id=?', (book_id,))
         for ch in chars:
             conn.execute(
                 'INSERT INTO characters '
                 '(book_id, name, gender, frequency, instruct, color_hex) '
-                'VALUES (?,?,?,?,?,?)',
+                'VALUES (?,?,?,?,?,?) '
+                'ON CONFLICT(book_id, name) DO NOTHING',
                 (
                     book_id, ch['name'], ch['gender'], ch['frequency'],
                     ch['instruct'], ch['color_hex'],
@@ -534,14 +596,23 @@ def _store_character_analysis(
         for annotation in annotations:
             conn.execute(
                 'INSERT INTO speaker_annotations '
-                '(book_id, chapter_id, unit_index, unit_text, speaker_name, confidence) '
-                'VALUES (?,?,?,?,?,?)',
+                '(book_id, chapter_id, unit_index, unit_text, speaker_name, '
+                'confidence, source) VALUES (?,?,?,?,?,?,?) '
+                'ON CONFLICT(chapter_id, unit_index) DO NOTHING',
                 (
                     book_id, annotation['chapter_id'], annotation['unit_index'],
                     annotation['unit_text'], annotation['speaker_name'],
-                    annotation['confidence'],
+                    annotation['confidence'], 'automatic',
                 ),
             )
+        conn.execute(
+            'UPDATE characters SET frequency=('
+            'SELECT COUNT(*) FROM speaker_annotations a '
+            'WHERE a.book_id=characters.book_id '
+            'AND a.speaker_name=characters.name COLLATE NOCASE'
+            ') WHERE book_id=?',
+            (book_id,),
+        )
         conn.execute(
             'UPDATE books SET character_analysis_status=?, character_analysis_message=?, '
             "character_analysis_updated_at=datetime('now') WHERE id=?",
@@ -590,7 +661,8 @@ def character_analysis_status(book_id):
             'character_analysis_updated_at AS updated_at, '
             '(SELECT COUNT(*) FROM characters c WHERE c.book_id=books.id) '
             'AS character_count, '
-            '(SELECT COUNT(*) FROM speaker_annotations a WHERE a.book_id=books.id) '
+            "(SELECT COUNT(*) FROM speaker_annotations a "
+            "WHERE a.book_id=books.id AND a.speaker_name <> '') "
             'AS dialogue_count '
             'FROM books WHERE id=?',
             (book_id,),
@@ -649,6 +721,138 @@ def get_chapter(book_id, chapter_id):
     if not row:
         return jsonify({'error': 'Not found'}), 404
     return jsonify(dict(row))
+
+
+@app.route(
+    '/api/books/<int:book_id>/chapters/<int:chapter_id>/speaker-annotations',
+    methods=['PUT'],
+)
+def update_speaker_annotation(book_id, chapter_id):
+    """Persist a human correction for one stable speaker unit."""
+    body = request.get_json(silent=True) or {}
+    try:
+        unit_index = int(body.get('unit_index'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'A valid unit_index is required'}), 400
+
+    raw_name = body.get('speaker_name')
+    speaker_name = (
+        ' '.join(str(raw_name).strip().split()) if raw_name is not None else ''
+    )
+    if len(speaker_name) > 100:
+        return jsonify({'error': 'Speaker name is too long'}), 400
+
+    with get_conn() as conn:
+        chapter = conn.execute(
+            'SELECT content FROM chapters WHERE id=? AND book_id=?',
+            (chapter_id, book_id),
+        ).fetchone()
+        if not chapter:
+            return jsonify({'error': 'Chapter not found'}), 404
+
+        units = enrichment.build_speaker_units(chapter['content'])
+        if unit_index < 0 or unit_index >= len(units):
+            return jsonify({'error': 'Speaker unit not found'}), 404
+        unit = units[unit_index]
+        requested_scope = str(body.get('scope') or '').strip().lower()
+        if not requested_scope:
+            requested_scope = 'turn' if body.get('apply_to_turn') else 'sentence'
+        if requested_scope not in {'sentence', 'turn_tail', 'turn'}:
+            return jsonify({'error': 'Invalid speaker correction scope'}), 400
+
+        target_indexes = [unit_index]
+        if requested_scope != 'sentence' and unit.get('turn_index') is not None:
+            target_indexes = [
+                int(candidate['index'])
+                for candidate in units
+                if candidate.get('dialogue_candidate')
+                and candidate.get('turn_index') == unit.get('turn_index')
+                and (
+                    requested_scope == 'turn'
+                    or int(candidate['index']) >= unit_index
+                )
+            ]
+
+        canonical_name = ''
+        character_id = None
+        if speaker_name:
+            existing = conn.execute(
+                'SELECT id, name FROM characters '
+                'WHERE book_id=? AND name=? COLLATE NOCASE',
+                (book_id, speaker_name),
+            ).fetchone()
+            if existing:
+                character_id = existing['id']
+                canonical_name = existing['name']
+            else:
+                profile = char_module.generate_voice_profile(
+                    speaker_name, 'unknown'
+                )
+                cursor = conn.execute(
+                    'INSERT INTO characters '
+                    '(book_id, name, gender, frequency, instruct, color_hex) '
+                    'VALUES (?,?,?,?,?,?)',
+                    (
+                        book_id, speaker_name, 'unknown', 0,
+                        profile['instruct'], profile['color_hex'],
+                    ),
+                )
+                character_id = cursor.lastrowid
+                canonical_name = speaker_name
+
+            for target_index in target_indexes:
+                target_unit = units[target_index]
+                conn.execute(
+                    'INSERT INTO speaker_annotations '
+                    '(book_id, chapter_id, unit_index, unit_text, speaker_name, '
+                    'confidence, source) VALUES (?,?,?,?,?,1.0,?) '
+                    'ON CONFLICT(chapter_id, unit_index) DO UPDATE SET '
+                    'unit_text=excluded.unit_text, speaker_name=excluded.speaker_name, '
+                    'confidence=excluded.confidence, source=excluded.source',
+                    (
+                        book_id, chapter_id, target_index, target_unit['text'],
+                        canonical_name, 'manual',
+                    ),
+                )
+        else:
+            for target_index in target_indexes:
+                target_unit = units[target_index]
+                conn.execute(
+                    'INSERT INTO speaker_annotations '
+                    '(book_id, chapter_id, unit_index, unit_text, speaker_name, '
+                    'confidence, source) VALUES (?,?,?,?,?,1.0,?) '
+                    'ON CONFLICT(chapter_id, unit_index) DO UPDATE SET '
+                    'unit_text=excluded.unit_text, speaker_name=excluded.speaker_name, '
+                    'confidence=excluded.confidence, source=excluded.source',
+                    (
+                        book_id, chapter_id, target_index,
+                        target_unit['text'], '', 'manual',
+                    ),
+                )
+
+        conn.execute(
+            'UPDATE characters SET frequency=('
+            'SELECT COUNT(*) FROM speaker_annotations a '
+            'WHERE a.book_id=characters.book_id '
+            'AND a.speaker_name=characters.name COLLATE NOCASE'
+            ') WHERE book_id=?',
+            (book_id,),
+        )
+        conn.execute(
+            'DELETE FROM tts_segments WHERE book_id=? AND chapter_id=?',
+            (book_id, chapter_id),
+        )
+
+    return jsonify({
+        'ok': True,
+        'unit_index': unit_index,
+        'speaker_name': canonical_name or None,
+        'character_id': character_id,
+        'source': 'manual',
+        'updated_units': len(target_indexes),
+        'scope': requested_scope,
+        'segments_cleared': True,
+    })
 
 
 @app.route('/api/books/<int:book_id>/progress', methods=['POST'])
@@ -1110,6 +1314,24 @@ def get_segments(book_id, chapter_id):
         rows = _ensure_chapter_segments(book_id, chapter_id)
     if not rows:
         return jsonify([])
+    with get_conn() as conn:
+        annotation_rows = conn.execute(
+            'SELECT unit_index, source FROM speaker_annotations '
+            'WHERE book_id=? AND chapter_id=?',
+            (book_id, chapter_id),
+        ).fetchall()
+        chapter = conn.execute(
+            'SELECT content FROM chapters WHERE id=? AND book_id=?',
+            (chapter_id, book_id),
+        ).fetchone()
+    annotation_sources = {
+        int(row['unit_index']): row['source'] or 'automatic'
+        for row in annotation_rows
+    }
+    speaker_units = (
+        enrichment.build_speaker_units(chapter['content']) if chapter else []
+    )
+    unit_metadata = {int(unit['index']): unit for unit in speaker_units}
     return jsonify([{
         'segment_index': r['segment_index'],
         'text': r['text'],
@@ -1118,6 +1340,15 @@ def get_segments(book_id, chapter_id):
         'has_audio': bool(r['audio_path'] and os.path.exists(r['audio_path'])),
         'duration_sec': r['duration_sec'],
         'cache_key': r['cache_key'],
+        'unit_index': r['unit_index'],
+        'speaker_candidate': bool(r['speaker_candidate']),
+        'speaker_source': annotation_sources.get(r['unit_index']),
+        'speaker_turn_index': (
+            unit_metadata.get(r['unit_index'], {}).get('turn_index')
+        ),
+        'speaker_continuation': bool(
+            unit_metadata.get(r['unit_index'], {}).get('continuation')
+        ),
     } for r in rows])
 
 
@@ -1132,11 +1363,13 @@ def _store_segments(book_id, chapter_id, segs):
             conn.execute(
                 'INSERT INTO tts_segments '
                 '(book_id, chapter_id, segment_index, text, enriched_text, '
-                'character_name, instruct, speed, is_dialogue, cache_key) '
-                'VALUES (?,?,?,?,?,?,?,?,?,?)',
+                'character_name, instruct, speed, is_dialogue, unit_index, '
+                'speaker_candidate, cache_key) '
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                 (book_id, chapter_id, i, s['text'], s['enriched_text'],
                  s['character_name'], s['instruct'], s['speed'],
-                 int(s['is_dialogue']), cache_key)
+                 int(s['is_dialogue']), s.get('unit_index'),
+                 int(bool(s.get('speaker_candidate'))), cache_key)
             )
 
 

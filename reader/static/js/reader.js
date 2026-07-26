@@ -15,6 +15,9 @@ let _progressSaveTimer = null;
 let _scrollProgressTimer = null;
 let _lastSavedProgressKey = '';
 let _ignoreScrollTrackingUntil = 0;
+let speakerCharacters = [];
+let editingSpeakerSegmentIndex = null;
+let speakerEditMode = false;
 
 // Two audio elements for gapless double-buffering
 const _audioA = document.getElementById('tts-audio');
@@ -256,7 +259,10 @@ async function openChapter(chapterId, options = {}) {
   const estEl = document.getElementById('reading-estimate');
   if (estEl) estEl.textContent = minutes > 0 ? `~${minutes} min read` : '';
 
-  segments = await fetch(`/api/tts/segments/${BOOK_ID}/${chapterId}`).then(r => r.json());
+  [segments, speakerCharacters] = await Promise.all([
+    fetch(`/api/tts/segments/${BOOK_ID}/${chapterId}`).then(r => r.json()),
+    fetch(`/api/books/${BOOK_ID}/characters`).then(r => r.json()),
+  ]);
   renderContent(segments);
   refreshChapterGenerationPanel(chapterId);
 
@@ -291,11 +297,43 @@ function renderContent(segs) {
 
 
     const charAttr = seg.character_name ? ` data-char="${esc(seg.character_name)}"` : '';
-    const cls = 'sentence' + (seg.is_dialogue ? ' dialogue-sent' : '');
-    return `<span class="${cls}" data-idx="${i}"${charAttr} onclick="jumpTo(${i})">${wordSpans}</span> `;
+    const speakerColor = getSpeakerColor(seg.character_name);
+    const cls = [
+      'sentence',
+      seg.is_dialogue ? 'dialogue-sent speaker-range' : '',
+      seg.speaker_candidate ? 'speaker-candidate' : '',
+      seg.speaker_continuation ? 'speaker-continuation' : 'speaker-turn-start',
+    ].filter(Boolean).join(' ');
+    const canEditSpeaker = seg.unit_index !== null &&
+      seg.unit_index !== undefined &&
+      (seg.speaker_candidate || seg.character_name);
+    const showLabel = canEditSpeaker &&
+      (!seg.speaker_continuation || !seg.character_name);
+    const speakerLabel = showLabel
+      ? `<button class="speaker-label${seg.character_name ? '' : ' unassigned'}"
+           type="button"
+           title="${seg.character_name ? 'Speaker assignment' : 'Possible dialogue without an assigned speaker'} — click to correct"
+           onclick="event.stopPropagation();openSpeakerEditor(${i})">
+           <span aria-hidden="true">${seg.speaker_source === 'manual' ? '&#10003;' : '&#10022;'}</span>
+           ${esc(seg.character_name || 'Assign speaker')}
+         </button>`
+      : '';
+    const inlineEditor = canEditSpeaker
+      ? `<select class="speaker-inline-select" aria-label="Speaker for this sentence"
+                 onclick="event.stopPropagation()"
+                 onchange="quickAssignSpeaker(${i},this)">
+           ${speakerOptions(seg.character_name)}
+         </select>`
+      : '';
+    return `<span class="${cls}" data-idx="${i}"${charAttr}
+                  style="--speaker-color:${speakerColor}"
+                  onclick="jumpTo(${i})">
+              ${inlineEditor}${speakerLabel}<span class="sentence-text">${wordSpans}</span>
+            </span> `;
   }).join('');
 
-  container.innerHTML = `<div>${html}</div>`;
+  container.classList.toggle('speaker-edit-active', speakerEditMode);
+  container.innerHTML = `<div class="chapter-text-flow">${html}</div>`;
 
   // Restore font prefs (font may be reset by innerHTML)
   container.style.fontSize   = fontSize + 'px';
@@ -325,6 +363,167 @@ async function _waitForTtsReady(bufferId, chapterId) {
     await new Promise(r => setTimeout(r, 750));
   }
   return false;
+}
+
+function getSpeakerColor(name) {
+  const character = speakerCharacters.find(item => item.name === name);
+  return character?.color_hex || '#c8a46e';
+}
+
+function speakerOptions(currentName = '') {
+  return [
+    `<option value=""${currentName ? '' : ' selected'}>Narration / no speaker</option>`,
+    ...speakerCharacters.map(character => {
+      const selected = character.name === currentName ? ' selected' : '';
+      return `<option value="${esc(character.name)}"${selected}>${esc(character.name)} · ${Number(character.frequency) || 0}</option>`;
+    }),
+    '<option value="__new__">+ New character…</option>',
+  ].join('');
+}
+
+function toggleSpeakerEditMode() {
+  speakerEditMode = !speakerEditMode;
+  const button = document.getElementById('speaker-edit-toggle');
+  const banner = document.getElementById('speaker-edit-banner');
+  if (button) {
+    button.classList.toggle('active', speakerEditMode);
+    button.textContent = speakerEditMode ? 'Editing speakers' : 'Edit speakers';
+  }
+  if (banner) banner.classList.toggle('hidden', !speakerEditMode);
+  renderContent(segments);
+  highlightSegment(currentSegIdx, { behavior: 'auto' });
+}
+
+function openSpeakerEditor(segmentIndex) {
+  const seg = segments[segmentIndex];
+  if (!seg || seg.unit_index === null || seg.unit_index === undefined) return;
+  editingSpeakerSegmentIndex = segmentIndex;
+
+  const select = document.getElementById('speaker-editor-select');
+  const currentName = String(seg.character_name || '');
+  select.innerHTML = [
+    '<option value="">No speaker / narration</option>',
+    ...speakerCharacters.map(character =>
+      `<option value="${esc(character.name)}">${esc(character.name)} (${Number(character.frequency) || 0} lines)</option>`
+    ),
+    '<option value="__new__">+ Add new character…</option>',
+  ].join('');
+
+  const known = speakerCharacters.some(character =>
+    character.name.toLocaleLowerCase() === currentName.toLocaleLowerCase()
+  );
+  select.value = currentName && known ? currentName : (currentName ? '__new__' : '');
+  document.getElementById('speaker-editor-new').value =
+    currentName && !known ? currentName : '';
+  document.getElementById('speaker-editor-quote').textContent = seg.text;
+  const turnScope = document.getElementById('speaker-editor-turn-scope');
+  const hasTurn = seg.speaker_turn_index !== null &&
+    seg.speaker_turn_index !== undefined;
+  turnScope.checked = hasTurn;
+  turnScope.disabled = !hasTurn;
+  toggleNewSpeakerInput();
+  document.getElementById('speaker-editor-overlay').classList.remove('hidden');
+  if (select.value === '__new__') {
+    document.getElementById('speaker-editor-new').focus();
+  } else {
+    select.focus();
+  }
+}
+
+function toggleNewSpeakerInput() {
+  const isNew = document.getElementById('speaker-editor-select').value === '__new__';
+  document.getElementById('speaker-editor-new-wrap').classList.toggle('hidden', !isNew);
+}
+
+function closeSpeakerEditor() {
+  document.getElementById('speaker-editor-overlay').classList.add('hidden');
+  editingSpeakerSegmentIndex = null;
+}
+
+async function saveSpeakerCorrection() {
+  const segmentIndex = editingSpeakerSegmentIndex;
+  const seg = segments[segmentIndex];
+  if (!seg) return;
+
+  const select = document.getElementById('speaker-editor-select');
+  const speakerName = select.value === '__new__'
+    ? document.getElementById('speaker-editor-new').value.trim()
+    : select.value;
+  if (select.value === '__new__' && !speakerName) {
+    showToast('Enter a character name.', 'err');
+    document.getElementById('speaker-editor-new').focus();
+    return;
+  }
+
+  const scope = document.getElementById('speaker-editor-scope').value;
+  const saveButton = document.getElementById('speaker-editor-save');
+  saveButton.disabled = true;
+  try {
+    await persistSpeakerCorrection(segmentIndex, speakerName, scope);
+    closeSpeakerEditor();
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function quickAssignSpeaker(segmentIndex, select) {
+  if (select.value === '__new__') {
+    openSpeakerEditor(segmentIndex);
+    return;
+  }
+  const scope = document.getElementById('speaker-turn-scope');
+  await persistSpeakerCorrection(
+    segmentIndex,
+    select.value,
+    scope?.value || 'turn_tail',
+  );
+}
+
+async function persistSpeakerCorrection(segmentIndex, speakerName, scope) {
+  const seg = segments[segmentIndex];
+  if (!seg) return;
+  const container = document.getElementById('chapter-content');
+  const previousScroll = container.scrollTop;
+  try {
+    const response = await fetch(
+      `/api/books/${BOOK_ID}/chapters/${currentChapterId}/speaker-annotations`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          unit_index: seg.unit_index,
+          speaker_name: speakerName || null,
+          scope: scope || 'sentence',
+        }),
+      }
+    );
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not save speaker');
+
+    stopPlayback();
+    _segCache = new Map();
+    [segments, speakerCharacters] = await Promise.all([
+      fetch(`/api/tts/segments/${BOOK_ID}/${currentChapterId}`).then(r => r.json()),
+      fetch(`/api/books/${BOOK_ID}/characters`).then(r => r.json()),
+    ]);
+    renderContent(segments);
+    container.scrollTop = previousScroll;
+    setCurrentSegment(clampSegmentIndex(segmentIndex), {
+      highlight: true,
+      behavior: 'auto',
+      save: true,
+    });
+    refreshChapterGenerationPanel(currentChapterId);
+    const scopeMessage = result.updated_units > 1
+      ? ` (${result.updated_units} sentences)`
+      : '';
+    showToast(speakerName
+      ? `Speaker saved: ${speakerName}${scopeMessage}`
+      : `Marked as narration${scopeMessage}.`);
+  } catch (error) {
+    showToast(error.message, 'err');
+    renderContent(segments);
+  }
 }
 
 async function _prewarmChapter() {
@@ -1188,6 +1387,7 @@ document.addEventListener('keydown', e => {
       showShortcuts();
       break;
     case 'Escape':
+      closeSpeakerEditor();
       hideShortcuts();
       document.getElementById('export-dropdown').classList.add('hidden');
       break;
@@ -1211,7 +1411,8 @@ function showToast(msg, type = 'ok') {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function esc(s) {
-  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

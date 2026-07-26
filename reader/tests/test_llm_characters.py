@@ -50,6 +50,26 @@ class SpeakerUnitTest(unittest.TestCase):
         )
         self.assertFalse(attribution["dialogue_candidate"])
 
+    def test_dash_dialogue_keeps_following_spoken_sentences_in_one_turn(self):
+        units = build_speaker_units(
+            "- Első mondat. Második mondat is ugyanattól a szereplőtől. "
+            "- Másik szereplő válaszol."
+        )
+
+        self.assertEqual(
+            [unit["dialogue_candidate"] for unit in units],
+            [True, True, True],
+        )
+        self.assertEqual(units[0]["turn_index"], units[1]["turn_index"])
+        self.assertNotEqual(units[1]["turn_index"], units[2]["turn_index"])
+        self.assertTrue(units[1]["continuation"])
+
+    def test_unambiguous_turn_assignments_expand_to_continuations(self):
+        text = "- Első mondat. A beszélő tovább folytatja."
+        from core.enrichment import expand_speaker_annotations
+        expanded = expand_speaker_annotations(text, {0: "Gorcsev Iván"})
+        self.assertEqual(expanded[1], "Gorcsev Iván")
+
     def test_stored_annotations_drive_tts_character_assignment(self):
         text = "A tanár nézett. - Ki maga? - Gorcsev Iván vagyok."
         units = build_speaker_units(text)

@@ -159,6 +159,16 @@ _DASH_DIALOGUE_RE = re.compile(
 _DASH_ATTRIBUTION_CONTINUATION_RE = re.compile(
     r'^(\s*[-\u2013\u2014]\s+[a-záéíóöőúüű].*?\s+[-\u2013\u2014],)\s*(.+)$'
 )
+_NARRATION_CONTINUATION_RE = re.compile(
+    r"^(?:(?:A|Az|Egy|The|An?)\s+.{0,55}|"
+    r"(?:He|She|They|Ő|Azután|Ekkor)\s+)"
+    r"\b(?:said|replied|asked|nodded|looked|smiled|laughed|sighed|"
+    r"turned|stood|stepped|walked|thought|saw|heard|felt|"
+    r"mondta|felelte|kérdezte|bólintott|nézett|elmosolyodott|"
+    r"nevetett|sóhajtott|folytatta|fordult|állt|lépett|ment|"
+    r"gondolta|látta|hallotta|érezte)\b",
+    re.IGNORECASE,
+)
 
 _ACTION_WORDS = re.compile(
     r"\b(ran|rushed|sprinted|struck|fell|crashed|burst|grabbed|pulled|pushed|"
@@ -319,8 +329,10 @@ def build_speaker_units(text: str) -> list[dict]:
     by ``enrich_chapter`` so stored unit indexes stay deterministic.
     """
     units: list[dict] = []
+    next_turn_index = 0
     paragraphs = _split_paragraphs(text)
     for paragraph in paragraphs:
+        active_dash_turn: int | None = None
         protected = _protect_sentence_boundaries(paragraph)
         protected = re.sub(
             r'([.!?\u2026]["\u201d\u00bb]?)\s+'
@@ -355,25 +367,112 @@ def build_speaker_units(text: str) -> list[dict]:
                     if fragment.strip()
                 ]
                 for fragment in dash_parts:
+                    previous_turn = active_dash_turn
                     attribution = (
                         _DASH_ATTRIBUTION_CONTINUATION_RE.match(fragment)
                         if not quoted else None
                     )
                     pieces = (
-                        [(attribution.group(1), False),
-                         (f"- {attribution.group(2)}", True)]
+                        [
+                            (attribution.group(1), False, None, False),
+                            (
+                                f"- {attribution.group(2)}",
+                                True,
+                                previous_turn,
+                                True,
+                            ),
+                        ]
                         if attribution else
-                        [(fragment, bool(quoted or _DASH_DIALOGUE_RE.match(fragment)))]
+                        [(fragment, None, None, False)]
                     )
-                    for piece_text, candidate in pieces:
+                    for piece_text, forced_candidate, forced_turn, continuation in pieces:
+                        starts_dialogue = bool(
+                            quoted or _DASH_DIALOGUE_RE.match(piece_text)
+                        )
+                        starts_narration = bool(
+                            re.match(
+                                r"^\s*[-\u2013\u2014]\s+"
+                                r"[a-záéíóöőúüű]",
+                                piece_text,
+                            )
+                        )
+
+                        if forced_candidate is not None:
+                            candidate = forced_candidate
+                            turn_index = forced_turn
+                            if candidate and turn_index is None:
+                                turn_index = next_turn_index
+                                next_turn_index += 1
+                            active_dash_turn = turn_index if candidate else None
+                        elif starts_dialogue:
+                            candidate = True
+                            turn_index = next_turn_index
+                            next_turn_index += 1
+                            active_dash_turn = None if quoted else turn_index
+                            continuation = False
+                        elif starts_narration:
+                            candidate = False
+                            turn_index = None
+                            active_dash_turn = None
+                            continuation = False
+                        elif (
+                            active_dash_turn is not None
+                            and not _NARRATION_CONTINUATION_RE.search(piece_text)
+                        ):
+                            candidate = True
+                            turn_index = active_dash_turn
+                            continuation = True
+                        else:
+                            candidate = False
+                            turn_index = None
+                            if active_dash_turn is not None:
+                                active_dash_turn = None
+                            continuation = False
+
                         units.append(
                             {
                                 "index": len(units),
                                 "text": piece_text.strip(),
                                 "dialogue_candidate": candidate,
+                                "turn_index": turn_index,
+                                "continuation": continuation,
                             }
                         )
     return units
+
+
+def expand_speaker_annotations(
+    text: str,
+    speaker_annotations: dict[int, str],
+) -> dict[int, str]:
+    """Fill unassigned continuation sentences inside an unambiguous turn.
+
+    Explicit annotations, including a manual empty-string narration override,
+    always win.  A turn is inherited only when its existing non-empty
+    assignments all name the same speaker.
+    """
+    expanded = dict(speaker_annotations)
+    units = build_speaker_units(text)
+    turn_units: dict[int, list[dict]] = {}
+    for unit in units:
+        turn_index = unit.get("turn_index")
+        if unit.get("dialogue_candidate") and turn_index is not None:
+            turn_units.setdefault(int(turn_index), []).append(unit)
+
+    for members in turn_units.values():
+        assigned = {
+            str(expanded[unit["index"]]).strip()
+            for unit in members
+            if unit["index"] in expanded and str(expanded[unit["index"]]).strip()
+        }
+        if len(assigned) != 1:
+            continue
+        speaker = next(iter(assigned))
+        for unit in members:
+            if unit["index"] not in expanded:
+                expanded[unit["index"]] = speaker
+
+    return expanded
 
 
 def _has_dialogue(text: str) -> bool:
@@ -609,19 +708,37 @@ def enrich_chapter(
     # hundreds of tiny model jobs.
     if single_narrator_mode:
         speaker_annotations = None
-        sentences = _split_single_narrator_segments(
-            cleaned_text,
-            chapter_title=chapter_title,
-        )
+        sentence_units = [
+            {
+                "index": None,
+                "text": sentence,
+                "dialogue_candidate": _has_dialogue(sentence),
+            }
+            for sentence in _split_single_narrator_segments(
+                cleaned_text,
+                chapter_title=chapter_title,
+            )
+        ]
     elif speaker_annotations is None:
-        sentences = _split_sentences(cleaned_text, chapter_title=chapter_title)
+        sentence_units = [
+            {
+                "index": None,
+                "text": sentence,
+                "dialogue_candidate": _has_dialogue(sentence),
+            }
+            for sentence in _split_sentences(
+                cleaned_text, chapter_title=chapter_title
+            )
+        ]
     else:
-        sentences = [unit["text"] for unit in build_speaker_units(cleaned_text)]
+        sentence_units = build_speaker_units(cleaned_text)
     scene_speed = _scene_speed(cleaned_text)
 
     segments = []
     last_speaker = None
-    for unit_index, sentence in enumerate(sentences):
+    for sequence_index, unit in enumerate(sentence_units):
+        unit_index = unit["index"]
+        sentence = unit["text"]
         sentence = sentence.strip()
         if not sentence:
             continue
@@ -630,8 +747,9 @@ def enrich_chapter(
             is_dialogue = _has_dialogue(sentence)
             speaker = _find_speaker(sentence, dialogue_map, last_speaker) if is_dialogue else None
         else:
-            speaker = speaker_annotations.get(unit_index)
+            speaker = speaker_annotations.get(sequence_index)
             is_dialogue = bool(speaker)
+        speaker = speaker or None
         if speaker and speaker not in character_map:
             speaker = None
         if speaker:
@@ -671,6 +789,8 @@ def enrich_chapter(
                 "speed": speed,
                 "is_dialogue": is_dialogue,
                 "is_whisper": is_whisper,
+                "unit_index": unit_index,
+                "speaker_candidate": bool(unit["dialogue_candidate"]),
             }
         )
 
