@@ -322,9 +322,10 @@ def export_single_chapter(
     output_dir: str | None = None,
     file_stem: str | None = None,
     mastering: bool = False,
+    book_author: str = 'Unknown',
 ) -> dict:
     """Returns {'audio_path': ..., 'subtitle_path': ..., 'audio_fmt': ..., 'sub_fmt': ...}"""
-    output_dir = output_dir or EXPORTS_DIR
+    output_dir = output_dir or _book_export_dir(book_author, book_title)
     os.makedirs(output_dir, exist_ok=True)
     safe_title = _safe_name(file_stem or chapter_title)
     timeline = build_timeline(segments)
@@ -389,10 +390,13 @@ def export_chapter_zip(
     audio_fmt: str = 'wav',
     sub_fmt: str = 'ass',
     mastering: bool = False,
+    book_author: str = 'Unknown',
 ) -> str:
     """chapters_data: list of {chapter_title, segments}. Returns zip file path."""
     safe_book = _safe_name(book_title)
-    zip_path = os.path.join(EXPORTS_DIR, f'{safe_book}_chapters.zip')
+    output_dir = _book_export_dir(book_author, book_title)
+    os.makedirs(output_dir, exist_ok=True)
+    zip_path = os.path.join(output_dir, f'{safe_book}_chapters.zip')
 
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         for ch in chapters_data:
@@ -400,6 +404,7 @@ def export_chapter_zip(
                 ch['chapter_title'], book_title, ch['segments'],
                 character_colors, audio_fmt, sub_fmt,
                 mastering=mastering,
+                book_author=book_author,
             )
             ch_safe = _safe_name(ch['chapter_title'])
             ext = result['audio_fmt']
@@ -416,10 +421,10 @@ def export_chapter_folder(
     audio_fmt: str = 'wav',
     sub_fmt: str = 'ass',
     mastering: bool = False,
+    book_author: str = 'Unknown',
 ) -> dict:
-    """Write numbered chapter files beneath ``exports/<book title>``."""
-    safe_book = _safe_name(book_title)
-    output_dir = os.path.join(EXPORTS_DIR, safe_book)
+    """Write numbered chapter files beneath ``exports/<author> - <book title>``."""
+    output_dir = _book_export_dir(book_author, book_title)
     os.makedirs(output_dir, exist_ok=True)
     max_number = max(
         (int(ch.get('chapter_number', 0)) for ch in chapters_data),
@@ -442,6 +447,7 @@ def export_chapter_folder(
             output_dir=output_dir,
             file_stem=stem,
             mastering=mastering,
+            book_author=book_author,
         ))
 
     return {'directory_path': output_dir, 'chapters': files}
@@ -487,3 +493,12 @@ def _safe_name(name: str) -> str:
     name = re.sub(r'[^\w\s-]', '', name)
     name = re.sub(r'\s+', '_', name.strip())
     return name[:80] or 'export'
+
+
+def _book_export_dir(book_author: str, book_title: str) -> str:
+    """Return a filesystem-safe ``Author - Title`` directory below exports."""
+    author = (book_author or '').strip() or 'Unknown'
+    title = (book_title or '').strip() or 'Untitled'
+    folder_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', f'{author} - {title}')
+    folder_name = re.sub(r'\s+', ' ', folder_name).strip(' .')
+    return os.path.join(EXPORTS_DIR, folder_name[:160] or 'Unknown - Untitled')

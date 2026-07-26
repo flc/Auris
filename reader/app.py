@@ -2003,7 +2003,9 @@ def _run_chapter_export(job_id: str, book_id: int, chapter_id: int, audio_fmt: s
         with get_conn() as conn:
             ch = conn.execute('SELECT * FROM chapters WHERE id=? AND book_id=?',
                               (chapter_id, book_id)).fetchone()
-            book = conn.execute('SELECT title FROM books WHERE id=?', (book_id,)).fetchone()
+            book = conn.execute(
+                'SELECT title, author FROM books WHERE id=?', (book_id,)
+            ).fetchone()
         if not ch:
             job['state'] = 'failed'
             job['error'] = 'Chapter not found'
@@ -2025,6 +2027,7 @@ def _run_chapter_export(job_id: str, book_id: int, chapter_id: int, audio_fmt: s
         result = exporter.export_single_chapter(
             ch['title'], book['title'], segs, colors, audio_fmt, sub_fmt,
             mastering=mastering,
+            book_author=book['author'],
         )
         job['state'] = 'complete'
         job['message'] = 'Done'
@@ -2098,6 +2101,7 @@ def _run_chapterwise_export(
             [c for c in chapters_data if c['segments']],
             colors, audio_fmt, sub_fmt,
             mastering=mastering,
+            book_author=book['author'],
         )
         job['state'] = 'complete'
         job['message'] = 'Done'

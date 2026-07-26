@@ -51,13 +51,20 @@ class ChapterFolderExportTests(unittest.TestCase):
                     }],
                     {},
                     mastering=True,
+                    book_author='Writer',
                 )
 
             self.assertTrue(os.path.isfile(result['audio_path']))
+            self.assertEqual(
+                os.path.dirname(result['audio_path']),
+                os.path.join(tmp, 'Writer - Book'),
+            )
             self.assertFalse(result['mastering_applied'])
             self.assertIn('FFmpeg', result['mastering_warning'])
             self.assertFalse(
-                os.path.exists(os.path.join(tmp, '.Chapter.premaster.wav'))
+                os.path.exists(
+                    os.path.join(tmp, 'Writer - Book', '.Chapter.premaster.wav')
+                )
             )
 
     def test_loudnorm_measurements_are_parsed_from_ffmpeg_output(self):
@@ -103,10 +110,14 @@ class ChapterFolderExportTests(unittest.TestCase):
 
             with patch.object(exporter, 'EXPORTS_DIR', tmp):
                 result = exporter.export_chapter_folder(
-                    'My Book', chapters, {}, audio_fmt='wav', sub_fmt='srt'
+                    'My Book', chapters, {}, audio_fmt='wav', sub_fmt='srt',
+                    book_author='Jane Writer',
                 )
 
-            self.assertEqual(result['directory_path'], os.path.join(tmp, 'My_Book'))
+            self.assertEqual(
+                result['directory_path'],
+                os.path.join(tmp, 'Jane Writer - My Book'),
+            )
             self.assertTrue(os.path.isfile(os.path.join(result['directory_path'], '02_The_Beginning.wav')))
             self.assertTrue(os.path.isfile(os.path.join(result['directory_path'], '02_The_Beginning.srt')))
             self.assertTrue(os.path.isfile(os.path.join(result['directory_path'], '11_The_End.wav')))
@@ -123,10 +134,19 @@ class ChapterFolderExportTests(unittest.TestCase):
                     'Chapter', 'Book',
                     [{'audio_path': source, 'duration_sec': 0.1, 'text': 'Text'}],
                     {}, audio_fmt='mp3', sub_fmt='srt',
+                    book_author='Writer',
                 )
 
             self.assertTrue(os.path.isfile(result['audio_path']))
-            self.assertFalse(os.path.exists(os.path.join(tmp, 'Chapter.wav')))
+            self.assertFalse(
+                os.path.exists(os.path.join(tmp, 'Writer - Book', 'Chapter.wav'))
+            )
+
+    def test_book_folder_removes_invalid_filename_characters(self):
+        with patch.object(exporter, 'EXPORTS_DIR', 'exports'):
+            path = exporter._book_export_dir('A: Writer', 'Book? <One>')
+
+        self.assertEqual(path, os.path.join('exports', 'A Writer - Book One'))
 
 
 if __name__ == '__main__':

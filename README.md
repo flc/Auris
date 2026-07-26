@@ -168,7 +168,7 @@ for every book. Dialogue style, OCR/text extraction quality, model choice, and
 model quantization can all change the result. The legacy English-oriented
 spaCy/regex detector remains available as a fallback mode.
 
-Multi-chapter exports are saved beneath `reader/exports/<book_title>/` with
+Exports are saved beneath `reader/exports/<author> - <book_title>/` with
 numbered filenames, for example `01_Introduction.mp3`. When MP3 export succeeds,
 the temporary WAV file is removed automatically.
 
