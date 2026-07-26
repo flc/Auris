@@ -160,6 +160,17 @@
             A fejezetek felolvasási szegmensekre bomlanak. A számnormalizálás
             számokat, dátumokat és pénzértékeket alakíthat beszélt formára.
             Magyar egész számokhoz az Auris a <code>num2words</code> útvonalát használja.
+            Az importból származó láthatatlan Unicode- és vezérlőkaraktereket
+            eltávolítja, a rendkívül hosszú mondatokat pedig természetes
+            tagmondat- vagy szóhatáron, legfeljebb 500 karakteres TTS-kérésekre
+            bontja.
+          </p>
+          <p>
+            A mondatok között rövid, a párbeszédváltásoknál kissé hosszabb,
+            valódi bekezdéshatáron pedig 0,85 másodperces szünet hallható.
+            A három ponttal lezárt szöveg továbbra is hosszabb, 1,5 másodperces
+            elhallgatást kap. Ugyanezek az időzítések kerülnek az exportba és a
+            feliratokba is.
           </p>
         </div>
       </div>
@@ -642,6 +653,7 @@
             <li><strong>Selected chapters:</strong> <code>all</code>, tartomány vagy lista, például <code>1,3,5-8</code>.</li>
             <li><strong>WAV:</strong> veszteségmentes és mindig elérhető.</li>
             <li><strong>MP3:</strong> ffmpeg szükséges a PATH környezeti változóban.</li>
+            <li>Az MP3 fájlokba bekerül a fejezet címe, a könyv címe, a szerző és fejezetenkénti exportnál a sorszám is.</li>
             <li><strong>Studio mastering:</strong> finom EQ és kompresszor után kétmenetes FFmpeg loudness-normalizálást végez fejezetenként.</li>
             <li>A mastering célértéke <strong>−19 LUFS</strong>, <strong>9 LU LRA</strong> és <strong>−3 dBTP</strong>; így a különböző referenciahangú szereplők hangerőkülönbsége is mérséklődik.</li>
             <li>A normalizálás a kész fejezeten történik, nem mondatonként, ezért nem okoz szegmensenkénti hangerőpumpálást.</li>

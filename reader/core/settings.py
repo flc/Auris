@@ -23,7 +23,7 @@ _DEFAULT_HIGGS_MODEL_PATH = str(_REPO_ROOT / 'model_backup' / 'Higgs-TTS-3-4B')
 LEGACY_NARRATOR_INSTRUCT = 'female, middle-aged, moderate pitch, american accent'
 DEFAULT_NARRATOR_INSTRUCT = 'male, elderly, low pitch, british accent'
 TTS_EXPRESSION_POLICY_VERSION = 2
-TTS_SEGMENT_BOUNDARY_POLICY_VERSION = 1
+TTS_SEGMENT_BOUNDARY_POLICY_VERSION = 2
 
 DEFAULTS: dict = {
     # Active TTS engine. Each engine keeps an independent model configuration.

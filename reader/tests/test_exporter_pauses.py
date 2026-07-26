@@ -4,6 +4,7 @@ from core.exporter import (
     DEFAULT_SEGMENT_PAUSE_SEC,
     DIALOGUE_TURN_PAUSE_SEC,
     ELLIPSIS_PAUSE_SEC,
+    PARAGRAPH_PAUSE_SEC,
     build_timeline,
     pause_after_segment,
 )
@@ -22,6 +23,15 @@ class ExporterPauseTests(unittest.TestCase):
         self.assertEqual(
             pause_after_segment(current, following),
             DIALOGUE_TURN_PAUSE_SEC,
+        )
+
+    def test_paragraph_boundary_gets_longer_pause(self):
+        current = {"text": "Paragraph end.", "ends_paragraph": True}
+        following = {"text": "Next paragraph."}
+
+        self.assertEqual(
+            pause_after_segment(current, following),
+            PARAGRAPH_PAUSE_SEC,
         )
 
     def test_three_dots_at_end_get_at_least_one_and_a_half_seconds(self):

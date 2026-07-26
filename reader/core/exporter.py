@@ -36,6 +36,7 @@ os.makedirs(EXPORTS_DIR, exist_ok=True)
 
 DEFAULT_SEGMENT_PAUSE_SEC = 0.35
 DIALOGUE_TURN_PAUSE_SEC = 0.55
+PARAGRAPH_PAUSE_SEC = 0.85
 ELLIPSIS_PAUSE_SEC = 1.5
 MASTERING_TARGET_I = -19.0
 MASTERING_TARGET_LRA = 9.0
@@ -60,14 +61,27 @@ def _ffmpeg_available() -> bool:
     return shutil.which('ffmpeg') is not None
 
 
-def _wav_to_mp3_bytes(wav_path: str) -> bytes | None:
+def _wav_to_mp3_bytes(
+    wav_path: str,
+    tags: dict[str, str] | None = None,
+) -> bytes | None:
     if not _ffmpeg_available():
         return None
     try:
         from pydub import AudioSegment
         seg = AudioSegment.from_wav(wav_path)
         buf = io.BytesIO()
-        seg.export(buf, format='mp3', bitrate='192k')
+        clean_tags = {
+            str(key): str(value)
+            for key, value in (tags or {}).items()
+            if str(value).strip()
+        }
+        seg.export(
+            buf,
+            format='mp3',
+            bitrate='192k',
+            tags=clean_tags or None,
+        )
         return buf.getvalue()
     except Exception as e:
         log.warning(f'MP3 conversion failed: {e}')
@@ -256,12 +270,15 @@ def pause_after_segment(segment: dict, next_segment: dict | None = None) -> floa
 
     Ellipses represent an intentional trailing-off pause. Consecutive dialogue
     segments get a slightly longer beat so a new voice does not cut in
-    unnaturally fast.
+    unnaturally fast. Paragraph endings keep the author's larger structural
+    pauses in both live playback and exported audio.
     """
     text = str(segment.get('text') or '').rstrip()
     text = text.rstrip('"\'”’»').rstrip()
     if text.endswith(('...', '…')):
         return ELLIPSIS_PAUSE_SEC
+    if segment.get('ends_paragraph'):
+        return PARAGRAPH_PAUSE_SEC
     if (
         next_segment
         and segment.get('is_dialogue')
@@ -323,6 +340,7 @@ def export_single_chapter(
     file_stem: str | None = None,
     mastering: bool = False,
     book_author: str = 'Unknown',
+    track_number: int | None = None,
 ) -> dict:
     """Returns {'audio_path': ..., 'subtitle_path': ..., 'audio_fmt': ..., 'sub_fmt': ...}"""
     output_dir = output_dir or _book_export_dir(book_author, book_title)
@@ -355,7 +373,15 @@ def export_single_chapter(
     out_audio = wav_path
     actual_fmt = 'wav'
     if audio_fmt == 'mp3':
-        mp3 = _wav_to_mp3_bytes(wav_path)
+        mp3 = _wav_to_mp3_bytes(
+            wav_path,
+            tags={
+                'title': chapter_title,
+                'artist': book_author,
+                'album': book_title,
+                'track': str(track_number) if track_number is not None else '',
+            },
+        )
         if mp3:
             out_audio = wav_path.replace('.wav', '.mp3')
             with open(out_audio, 'wb') as f:
@@ -399,12 +425,14 @@ def export_chapter_zip(
     zip_path = os.path.join(output_dir, f'{safe_book}_chapters.zip')
 
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for ch in chapters_data:
+        for fallback_number, ch in enumerate(chapters_data, 1):
+            track_number = int(ch.get('chapter_number') or fallback_number)
             result = export_single_chapter(
                 ch['chapter_title'], book_title, ch['segments'],
                 character_colors, audio_fmt, sub_fmt,
                 mastering=mastering,
                 book_author=book_author,
+                track_number=track_number,
             )
             ch_safe = _safe_name(ch['chapter_title'])
             ext = result['audio_fmt']
@@ -448,6 +476,7 @@ def export_chapter_folder(
             file_stem=stem,
             mastering=mastering,
             book_author=book_author,
+            track_number=number,
         ))
 
     return {'directory_path': output_dir, 'chapters': files}

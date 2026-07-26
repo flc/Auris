@@ -280,6 +280,8 @@ def _segments_match_rows(segs: list[dict], rows) -> bool:
             return False
         if bool(row['speaker_candidate']) != bool(seg.get('speaker_candidate')):
             return False
+        if bool(row['ends_paragraph']) != bool(seg.get('ends_paragraph')):
+            return False
 
     return True
 
@@ -1421,6 +1423,7 @@ def get_segments(book_id, chapter_id):
         'speaker_continuation': bool(
             unit_metadata.get(r['unit_index'], {}).get('continuation')
         ),
+        'ends_paragraph': bool(r['ends_paragraph']),
     } for r in rows])
 
 
@@ -1436,12 +1439,13 @@ def _store_segments(book_id, chapter_id, segs):
                 'INSERT INTO tts_segments '
                 '(book_id, chapter_id, segment_index, text, enriched_text, '
                 'character_name, instruct, speed, is_dialogue, unit_index, '
-                'speaker_candidate, cache_key) '
-                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                'speaker_candidate, ends_paragraph, cache_key) '
+                'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (book_id, chapter_id, i, s['text'], s['enriched_text'],
                  s['character_name'], s['instruct'], s['speed'],
                  int(s['is_dialogue']), s.get('unit_index'),
-                 int(bool(s.get('speaker_candidate'))), cache_key)
+                 int(bool(s.get('speaker_candidate'))),
+                 int(bool(s.get('ends_paragraph'))), cache_key)
             )
 
 

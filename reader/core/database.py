@@ -109,7 +109,8 @@ def init_db():
             duration_sec  REAL,
             cache_key     TEXT UNIQUE,
             unit_index    INTEGER,
-            speaker_candidate INTEGER DEFAULT 0
+            speaker_candidate INTEGER DEFAULT 0,
+            ends_paragraph INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS bookmarks (
@@ -202,7 +203,8 @@ def init_db():
                     duration_sec  REAL,
                     cache_key     TEXT,
                     unit_index    INTEGER,
-                    speaker_candidate INTEGER DEFAULT 0
+                    speaker_candidate INTEGER DEFAULT 0,
+                    ends_paragraph INTEGER DEFAULT 0
                 );
                 INSERT INTO tts_segments_new
                     (id, book_id, chapter_id, segment_index, text, enriched_text,
@@ -234,4 +236,9 @@ def init_db():
             conn.execute(
                 "ALTER TABLE tts_segments "
                 "ADD COLUMN speaker_candidate INTEGER DEFAULT 0"
+            )
+        if "ends_paragraph" not in segment_cols:
+            conn.execute(
+                "ALTER TABLE tts_segments "
+                "ADD COLUMN ends_paragraph INTEGER DEFAULT 0"
             )
