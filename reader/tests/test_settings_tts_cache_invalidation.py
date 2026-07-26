@@ -66,6 +66,34 @@ class SettingsTtsCacheInvalidationTest(unittest.TestCase):
         )
         self.assertFalse(settings.migrate_tts_expression_policy_version())
 
+    def test_segment_boundary_migration_disables_unsafe_line_merging_once(self):
+        settings.save({
+            'tts_segment_boundary_policy_version': 0,
+            'tts_coalesce_chars': 720,
+        })
+
+        self.assertTrue(
+            settings.migrate_tts_segment_boundary_policy_version()
+        )
+        current = settings.load()
+        self.assertEqual(current['tts_coalesce_chars'], 0)
+        self.assertEqual(
+            current['tts_segment_boundary_policy_version'],
+            settings.TTS_SEGMENT_BOUNDARY_POLICY_VERSION,
+        )
+        self.assertFalse(
+            settings.migrate_tts_segment_boundary_policy_version()
+        )
+
+    def test_settings_api_keeps_exact_line_boundaries_enabled(self):
+        response = self.client.post(
+            '/api/settings',
+            json={'tts_coalesce_chars': 1000},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['settings']['tts_coalesce_chars'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

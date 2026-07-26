@@ -56,7 +56,8 @@ DEFAULT_TTS_BATCH_MAX_CHARS = 12000
 # Merge consecutive same-voice short lines before synth so each GPU call does
 # real work. OmniVoice is ~0.6B params — tiny per-line batches never fill a 24GB card.
 # 0 disables coalescing. ~600–900 chars ≈ several sentences / ~15–25s speech.
-DEFAULT_TTS_COALESCE_CHARS = 720
+DEFAULT_TTS_COALESCE_CHARS = 0
+AUDIO_CACHE_FORMAT_VERSION = 2
 
 
 def _write_audio_atomic(path: str, audio: np.ndarray, sample_rate: int) -> None:
@@ -177,15 +178,10 @@ def _tts_batch_max_chars_from_settings(batch_size: int | None = None) -> int:
 
 
 def _tts_coalesce_chars_from_settings() -> int:
-    try:
-        from core.settings import get
-
-        value = int(get("tts_coalesce_chars", DEFAULT_TTS_COALESCE_CHARS))
-    except Exception:
-        value = DEFAULT_TTS_COALESCE_CHARS
-    if value <= 0:
-        return 0
-    return max(80, min(value, 4000))
+    # Character-proportional splitting cannot recover exact spoken boundaries
+    # from a merged waveform. Keep synthesis units independent; batching still
+    # provides GPU throughput without mixing neighboring lines.
+    return 0
 
 
 def _coalesce_pending_items(pending: list[dict], max_chars: int) -> list[dict]:
@@ -834,7 +830,8 @@ class TTSEngine:
     ) -> str:
         payload = (
             f"{text}|{instruct}|{ref_audio}|{ref_text}|{speed:.2f}|"
-            f"{language or ''}|nt={int(bool(normalize_text))}|ns={int(num_step)}"
+            f"{language or ''}|nt={int(bool(normalize_text))}|ns={int(num_step)}|"
+            f"audio-cache-v={AUDIO_CACHE_FORMAT_VERSION}"
         )
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 

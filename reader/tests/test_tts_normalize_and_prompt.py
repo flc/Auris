@@ -13,6 +13,7 @@ from core.tts_engine import (
     _pack_items_for_batch,
     _prompt_cache_key,
     _split_audio_by_char_weights,
+    _tts_coalesce_chars_from_settings,
 )
 
 
@@ -339,6 +340,13 @@ class CoalesceTest(unittest.TestCase):
 
 
 class GenerateManyBatchTest(unittest.TestCase):
+    def test_exact_line_boundaries_disable_waveform_coalescing(self):
+        with patch('core.settings.get', return_value=1000):
+            self.assertEqual(
+                _tts_coalesce_chars_from_settings(),
+                0,
+            )
+
     def test_same_voice_items_are_batched(self):
         engine = TTSEngine()
         model = _FakeModel()

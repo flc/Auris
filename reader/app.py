@@ -118,7 +118,13 @@ def _startup():
             init_db()
             # Old persisted prompts may contain [surprise-oh]/[question-oh],
             # which ask OmniVoice to vocalize an "oh" before the sentence.
-            if app_settings.migrate_tts_expression_policy_version():
+            expression_policy_changed = (
+                app_settings.migrate_tts_expression_policy_version()
+            )
+            segment_boundary_policy_changed = (
+                app_settings.migrate_tts_segment_boundary_policy_version()
+            )
+            if expression_policy_changed or segment_boundary_policy_changed:
                 with get_conn() as conn:
                     conn.execute('DELETE FROM tts_segments')
         except Exception:
@@ -1593,7 +1599,7 @@ def _ensure_audio_for_chapter(
             "pending_segments=%d",
             num_step,
             _settings_get("tts_batch_size", 0),
-            _settings_get("tts_coalesce_chars", 720),
+            _settings_get("tts_coalesce_chars", 0),
             len(pending_items),
         )
     except Exception:
@@ -2012,12 +2018,21 @@ def _run_chapter_export(job_id: str, book_id: int, chapter_id: int, audio_fmt: s
         )
         job['message'] = 'Merging audio...'
         colors = _get_char_colors(book_id)
-        result = exporter.export_single_chapter(ch['title'], book['title'], segs, colors, audio_fmt, sub_fmt)
+        mastering = bool(app_settings.get('audio_mastering', True))
+        job['message'] = (
+            'Merging and mastering audio...' if mastering else 'Merging audio...'
+        )
+        result = exporter.export_single_chapter(
+            ch['title'], book['title'], segs, colors, audio_fmt, sub_fmt,
+            mastering=mastering,
+        )
         job['state'] = 'complete'
         job['message'] = 'Done'
         job['result'] = {
             'audio_download': f'/api/export/download?path={result["audio_path"]}',
             'subtitle_download': f'/api/export/download?path={result["subtitle_path"]}',
+            'mastering_applied': result.get('mastering_applied', False),
+            'mastering_warning': result.get('mastering_warning'),
         }
     except Exception as e:
         log.exception('Export job %s failed', job_id)
@@ -2072,18 +2087,27 @@ def _run_chapterwise_export(
                 job,
                 export_pool=export_pool,
             )
-        job['message'] = 'Writing chapter files...'
+        mastering = bool(app_settings.get('audio_mastering', True))
+        job['message'] = (
+            'Writing and mastering chapter files...'
+            if mastering else 'Writing chapter files...'
+        )
         colors = _get_char_colors(book_id)
         result = exporter.export_chapter_folder(
             book['title'],
             [c for c in chapters_data if c['segments']],
             colors, audio_fmt, sub_fmt,
+            mastering=mastering,
         )
         job['state'] = 'complete'
         job['message'] = 'Done'
         job['result'] = {
             'export_path': result['directory_path'],
             'chapter_count': len(result['chapters']),
+            'mastered_chapters': sum(
+                1 for chapter in result['chapters']
+                if chapter.get('mastering_applied')
+            ),
         }
     except Exception as e:
         log.exception('Export job %s failed', job_id)
@@ -2283,6 +2307,7 @@ def save_settings():
         'narrator_instruct', 'single_narrator_mode', 'default_speed', 'audio_format',
         'subtitle_format', 'theme', 'font_size', 'font_family', 'line_height',
         'normalize_text', 'tts_num_step', 'tts_batch_size', 'tts_coalesce_chars',
+        'audio_mastering',
         'tts_accel', 'tts_export_workers',
         'character_detection_mode', 'llm_base_url', 'llm_api_key', 'llm_model',
         'llm_timeout_sec', 'llm_max_output_tokens', 'llm_max_characters',
@@ -2339,6 +2364,8 @@ def save_settings():
                 updates[key] = default
     if 'normalize_text' in updates:
         updates['normalize_text'] = bool(updates['normalize_text'])
+    if 'audio_mastering' in updates:
+        updates['audio_mastering'] = bool(updates['audio_mastering'])
     if 'tts_num_step' in updates:
         try:
             step = int(updates['tts_num_step'])
@@ -2355,10 +2382,9 @@ def save_settings():
         except (TypeError, ValueError):
             updates['tts_batch_size'] = 0
     if 'tts_coalesce_chars' in updates:
-        try:
-            updates['tts_coalesce_chars'] = max(0, min(int(updates['tts_coalesce_chars']), 4000))
-        except (TypeError, ValueError):
-            updates['tts_coalesce_chars'] = 720
+        # Kept in the settings schema for backward compatibility, but exact
+        # spoken boundaries require this optimization to stay disabled.
+        updates['tts_coalesce_chars'] = 0
     if 'tts_accel' in updates:
         mode = str(updates['tts_accel'] or 'auto').strip().lower()
         if mode not in ('off', 'auto', 'cuda_graph', 'triton', 'hybrid'):

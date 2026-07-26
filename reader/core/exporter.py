@@ -16,8 +16,10 @@ Subtitle formats:
 """
 
 import io
+import json
 import os
 import re
+import subprocess
 import zipfile
 import logging
 import shutil
@@ -35,6 +37,21 @@ os.makedirs(EXPORTS_DIR, exist_ok=True)
 DEFAULT_SEGMENT_PAUSE_SEC = 0.35
 DIALOGUE_TURN_PAUSE_SEC = 0.55
 ELLIPSIS_PAUSE_SEC = 1.5
+MASTERING_TARGET_I = -19.0
+MASTERING_TARGET_LRA = 9.0
+MASTERING_TARGET_TP = -3.0
+
+# Conservative audiobook polish before program-level loudness matching.
+# Compression narrows voice-to-voice level differences without normalizing
+# every sentence independently (which would create audible pumping).
+_MASTERING_PRE_FILTERS = (
+    'highpass=f=55,'
+    'lowpass=f=16000,'
+    'equalizer=f=180:t=q:w=1:g=-1,'
+    'equalizer=f=3500:t=q:w=1:g=1,'
+    'acompressor=threshold=0.125:ratio=2.5:attack=20:release=250:'
+    'makeup=1.6:knee=2.8:detection=rms:link=average'
+)
 
 
 # ── ffmpeg / pydub detection ──────────────────────────────────────────────────
@@ -55,6 +72,90 @@ def _wav_to_mp3_bytes(wav_path: str) -> bytes | None:
     except Exception as e:
         log.warning(f'MP3 conversion failed: {e}')
         return None
+
+
+def _extract_loudnorm_measurements(stderr: str) -> dict:
+    matches = re.findall(
+        r'\{\s*"input_i".*?\}',
+        str(stderr or ''),
+        flags=re.DOTALL,
+    )
+    if not matches:
+        raise ValueError('FFmpeg did not return loudness measurements.')
+    measurements = json.loads(matches[-1])
+    required = (
+        'input_i', 'input_lra', 'input_tp', 'input_thresh', 'target_offset',
+    )
+    for key in required:
+        value = str(measurements.get(key, '')).strip().lower()
+        if not value or value in {'-inf', 'inf', 'nan'}:
+            raise ValueError(f'Invalid FFmpeg loudness measurement: {key}')
+    return measurements
+
+
+def _master_wav(input_path: str, output_path: str) -> tuple[bool, str | None]:
+    """Apply gentle studio polish and two-pass EBU R128 loudness matching."""
+    if not _ffmpeg_available():
+        return False, 'FFmpeg is unavailable; studio mastering was skipped.'
+
+    loudnorm_base = (
+        f'loudnorm=I={MASTERING_TARGET_I}:LRA={MASTERING_TARGET_LRA}:'
+        f'TP={MASTERING_TARGET_TP}'
+    )
+    first_filter = (
+        f'{_MASTERING_PRE_FILTERS},{loudnorm_base}:print_format=json'
+    )
+    first = subprocess.run(
+        [
+            'ffmpeg', '-hide_banner', '-nostats', '-y',
+            '-i', input_path,
+            '-af', first_filter,
+            '-f', 'null', os.devnull,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if first.returncode != 0:
+        return False, (
+            'FFmpeg mastering analysis failed: '
+            + (first.stderr.strip().splitlines()[-1] if first.stderr else 'unknown error')
+        )
+
+    try:
+        measured = _extract_loudnorm_measurements(first.stderr)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return False, str(exc)
+
+    second_filter = (
+        f'{_MASTERING_PRE_FILTERS},{loudnorm_base}:'
+        f'measured_I={measured["input_i"]}:'
+        f'measured_LRA={measured["input_lra"]}:'
+        f'measured_TP={measured["input_tp"]}:'
+        f'measured_thresh={measured["input_thresh"]}:'
+        f'offset={measured["target_offset"]}:'
+        'linear=true:print_format=summary'
+    )
+    second = subprocess.run(
+        [
+            'ffmpeg', '-hide_banner', '-nostats', '-y',
+            '-i', input_path,
+            '-af', second_filter,
+            '-ar', str(SAMPLE_RATE),
+            '-ac', '1',
+            '-c:a', 'pcm_s16le',
+            output_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if second.returncode != 0 or not os.path.isfile(output_path):
+        return False, (
+            'FFmpeg mastering pass failed: '
+            + (second.stderr.strip().splitlines()[-1] if second.stderr else 'unknown error')
+        )
+    return True, None
 
 
 # ── Time formatting ───────────────────────────────────────────────────────────
@@ -220,6 +321,7 @@ def export_single_chapter(
     sub_fmt: str = 'ass',
     output_dir: str | None = None,
     file_stem: str | None = None,
+    mastering: bool = False,
 ) -> dict:
     """Returns {'audio_path': ..., 'subtitle_path': ..., 'audio_fmt': ..., 'sub_fmt': ...}"""
     output_dir = output_dir or EXPORTS_DIR
@@ -229,7 +331,25 @@ def export_single_chapter(
     merged = _merge_wavs(timeline)
 
     wav_path = os.path.join(output_dir, f'{safe_title}.wav')
-    sf.write(wav_path, merged, SAMPLE_RATE)
+    mastering_applied = False
+    mastering_warning = None
+    if mastering:
+        raw_wav_path = os.path.join(output_dir, f'.{safe_title}.premaster.wav')
+        sf.write(raw_wav_path, merged, SAMPLE_RATE)
+        try:
+            mastering_applied, mastering_warning = _master_wav(
+                raw_wav_path,
+                wav_path,
+            )
+            if not mastering_applied:
+                if os.path.exists(wav_path):
+                    os.remove(wav_path)
+                os.replace(raw_wav_path, wav_path)
+        finally:
+            if os.path.exists(raw_wav_path):
+                os.remove(raw_wav_path)
+    else:
+        sf.write(wav_path, merged, SAMPLE_RATE)
 
     out_audio = wav_path
     actual_fmt = 'wav'
@@ -252,8 +372,14 @@ def export_single_chapter(
     with open(sub_path, 'w', encoding='utf-8') as f:
         f.write(sub_content)
 
-    return {'audio_path': out_audio, 'subtitle_path': sub_path,
-            'audio_fmt': actual_fmt, 'sub_fmt': sub_ext}
+    return {
+        'audio_path': out_audio,
+        'subtitle_path': sub_path,
+        'audio_fmt': actual_fmt,
+        'sub_fmt': sub_ext,
+        'mastering_applied': mastering_applied,
+        'mastering_warning': mastering_warning,
+    }
 
 
 def export_chapter_zip(
@@ -262,6 +388,7 @@ def export_chapter_zip(
     character_colors: dict,
     audio_fmt: str = 'wav',
     sub_fmt: str = 'ass',
+    mastering: bool = False,
 ) -> str:
     """chapters_data: list of {chapter_title, segments}. Returns zip file path."""
     safe_book = _safe_name(book_title)
@@ -272,6 +399,7 @@ def export_chapter_zip(
             result = export_single_chapter(
                 ch['chapter_title'], book_title, ch['segments'],
                 character_colors, audio_fmt, sub_fmt,
+                mastering=mastering,
             )
             ch_safe = _safe_name(ch['chapter_title'])
             ext = result['audio_fmt']
@@ -287,6 +415,7 @@ def export_chapter_folder(
     character_colors: dict,
     audio_fmt: str = 'wav',
     sub_fmt: str = 'ass',
+    mastering: bool = False,
 ) -> dict:
     """Write numbered chapter files beneath ``exports/<book title>``."""
     safe_book = _safe_name(book_title)
@@ -312,6 +441,7 @@ def export_chapter_folder(
             sub_fmt,
             output_dir=output_dir,
             file_stem=stem,
+            mastering=mastering,
         ))
 
     return {'directory_path': output_dir, 'chapters': files}

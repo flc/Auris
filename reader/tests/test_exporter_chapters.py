@@ -29,6 +29,53 @@ class ChapterSelectionTests(unittest.TestCase):
 
 
 class ChapterFolderExportTests(unittest.TestCase):
+    def test_mastering_falls_back_to_unprocessed_wav_without_ffmpeg(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, 'source.wav')
+            sf.write(
+                source,
+                np.sin(np.linspace(0, np.pi * 20, 2400)).astype(np.float32),
+                exporter.SAMPLE_RATE,
+            )
+            with (
+                patch.object(exporter, 'EXPORTS_DIR', tmp),
+                patch.object(exporter, '_ffmpeg_available', return_value=False),
+            ):
+                result = exporter.export_single_chapter(
+                    'Chapter',
+                    'Book',
+                    [{
+                        'audio_path': source,
+                        'duration_sec': 0.1,
+                        'text': 'Text',
+                    }],
+                    {},
+                    mastering=True,
+                )
+
+            self.assertTrue(os.path.isfile(result['audio_path']))
+            self.assertFalse(result['mastering_applied'])
+            self.assertIn('FFmpeg', result['mastering_warning'])
+            self.assertFalse(
+                os.path.exists(os.path.join(tmp, '.Chapter.premaster.wav'))
+            )
+
+    def test_loudnorm_measurements_are_parsed_from_ffmpeg_output(self):
+        measurements = exporter._extract_loudnorm_measurements(
+            'noise before\n'
+            '{\n'
+            '  "input_i" : "-22.10",\n'
+            '  "input_tp" : "-4.20",\n'
+            '  "input_lra" : "3.50",\n'
+            '  "input_thresh" : "-32.20",\n'
+            '  "output_i" : "-19.00",\n'
+            '  "target_offset" : "0.10"\n'
+            '}\n'
+        )
+
+        self.assertEqual(measurements['input_i'], '-22.10')
+        self.assertEqual(measurements['target_offset'], '0.10')
+
     def test_export_creates_book_folder_with_numbered_chapters(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = os.path.join(tmp, 'source.wav')

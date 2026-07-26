@@ -95,14 +95,10 @@ async function loadSettings() {
       batchSelect.value = batch;
     }
   }
-  const coal = String(_settings.tts_coalesce_chars ?? 720);
+  const coal = String(_settings.tts_coalesce_chars ?? 0);
   const coalSelect = document.getElementById('tts-coalesce-chars');
   if (coalSelect) {
-    if (![...coalSelect.options].some(o => o.value === coal)) {
-      coalSelect.value = '720';
-    } else {
-      coalSelect.value = coal;
-    }
+    coalSelect.value = '0';
   }
   const accel = String(_settings.tts_accel ?? 'auto');
   const accelSelect = document.getElementById('tts-accel');
@@ -121,6 +117,8 @@ async function loadSettings() {
   }
   document.getElementById('audio-format').value    = _settings.audio_format    || 'wav';
   document.getElementById('subtitle-format').value = _settings.subtitle_format || 'ass';
+  document.getElementById('audio-mastering').checked =
+    _settings.audio_mastering !== false;
 
   refreshAccelStatus();
 
@@ -482,6 +480,7 @@ async function saveSettings() {
     ) || 0,
     audio_format:      document.getElementById('audio-format').value,
     subtitle_format:   document.getElementById('subtitle-format').value,
+    audio_mastering:   document.getElementById('audio-mastering').checked,
     theme:             document.getElementById('theme-select').value,
     font_family:       document.getElementById('font-family').value,
     font_size:         parseInt(document.getElementById('font-size').value) || 18,

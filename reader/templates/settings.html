@@ -326,17 +326,11 @@
       </span>
     </div>
     <div class="setting-row">
-      <label>Merge short lines (chars)</label>
-      <select id="tts-coalesce-chars" class="select-input">
-        <option value="0">0 — off (one GPU call per sentence)</option>
-        <option value="400">400 — light merge</option>
-        <option value="720">720 — recommended</option>
-        <option value="1000">1000 — aggressive (faster export)</option>
-      </select>
+      <label>Exact spoken-line boundaries</label>
+      <input type="hidden" id="tts-coalesce-chars" value="0">
       <span class="muted" style="font-size:.78rem">
-        Joins consecutive same-voice sentences into one longer synth, then splits the
-        audio back for subtitles/timeline. This usually speeds full-book export more
-        than raising batch size alone (paper: batch 1→8 only ~30% faster).
+        Enabled. Every text segment receives its own waveform, so short replies
+        cannot contain words cut from a neighboring line. GPU batching remains active.
       </span>
     </div>
     <div class="setting-row">
@@ -377,6 +371,17 @@
   <!-- Shared output defaults -->
   <section class="settings-section">
     <div class="settings-section-title">Output Defaults</div>
+    <div class="setting-row">
+      <label class="checkbox-label">
+        <input type="checkbox" id="audio-mastering">
+        Studio mastering for exports
+      </label>
+      <span class="muted" style="font-size:.78rem">
+        Uses FFmpeg on each completed chapter: gentle tonal shaping and compression,
+        followed by two-pass loudness normalization to −19 LUFS, 9 LU LRA and
+        −3 dB true peak. This evens out narrator and cloned-character volume.
+      </span>
+    </div>
     <div class="setting-row">
       <label>Audio format</label>
       <select id="audio-format" class="select-input">

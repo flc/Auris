@@ -436,8 +436,8 @@
           <thead><tr><th>OmniVoice beállítás</th><th>Mit szabályoz?</th><th>Ajánlás</th></tr></thead>
           <tbody>
             <tr><td>Speech quality</td><td>12/16/24/32 iteratív dekódolási lépés; több lépés lassabb és finomabb.</td><td><strong>16</strong></td></tr>
-            <tr><td>GPU batch size</td><td>Egy generate hívásban együtt feldolgozott egyesített blokkok száma.</td><td><strong>Auto</strong></td></tr>
-            <tr><td>Merge short lines</td><td>Egymást követő, azonos hangú rövid sorok egyesítése, majd visszavágása.</td><td><strong>720 karakter</strong></td></tr>
+            <tr><td>GPU batch size</td><td>Egy generate hívásban együtt, de külön hullámformaként feldolgozott szövegegységek száma.</td><td><strong>Auto</strong></td></tr>
+            <tr><td>Exact spoken-line boundaries</td><td>Minden szövegegység külön hangfájlt kap; nincs karakterszám alapján visszavágott, összekevert rövid sor.</td><td><strong>Bekapcsolva</strong></td></tr>
             <tr><td>GPU acceleration</td><td>Plain PyTorch, CUDA Graph, Triton vagy Hybrid útvonal.</td><td>Gépenként mérendő</td></tr>
             <tr><td>Parallel export workers</td><td>Második modell csak nagyobb voice-clone export idejére.</td><td><strong>Auto</strong></td></tr>
           </tbody>
@@ -642,6 +642,9 @@
             <li><strong>Selected chapters:</strong> <code>all</code>, tartomány vagy lista, például <code>1,3,5-8</code>.</li>
             <li><strong>WAV:</strong> veszteségmentes és mindig elérhető.</li>
             <li><strong>MP3:</strong> ffmpeg szükséges a PATH környezeti változóban.</li>
+            <li><strong>Studio mastering:</strong> finom EQ és kompresszor után kétmenetes FFmpeg loudness-normalizálást végez fejezetenként.</li>
+            <li>A mastering célértéke <strong>−19 LUFS</strong>, <strong>9 LU LRA</strong> és <strong>−3 dBTP</strong>; így a különböző referenciahangú szereplők hangerőkülönbsége is mérséklődik.</li>
+            <li>A normalizálás a kész fejezeten történik, nem mondatonként, ezért nem okoz szegmensenkénti hangerőpumpálást.</li>
             <li><strong>ASS:</strong> szereplőnként színezett/stílusozott felirat.</li>
             <li><strong>SRT:</strong> egyszerű, széles körben kompatibilis felirat.</li>
           </ul>
@@ -683,12 +686,18 @@
           <tbody>
             <tr><td>Speech quality</td><td><strong>16 step</strong></td><td><strong>8 step</strong></td></tr>
             <tr><td>GPU batch size</td><td><strong>8 vagy Auto</strong></td><td><strong>8 vagy Auto</strong></td></tr>
-            <tr><td>Merge short lines</td><td><strong>400–720</strong></td><td><strong>720–1000</strong></td></tr>
+            <tr><td>Exact spoken-line boundaries</td><td><strong>Bekapcsolva</strong></td><td><strong>Bekapcsolva</strong></td></tr>
             <tr><td>GPU acceleration</td><td><strong>Off a mért gépen</strong></td><td><strong>Off a mért gépen</strong></td></tr>
             <tr><td>Parallel export workers</td><td><strong>2</strong></td><td><strong>2</strong></td></tr>
           </tbody>
         </table>
       </div>
+      <p class="docs-footnote" style="margin-top:14px">
+        A fenti sebességmérés a korábbi rövidsor-egyesítéssel készült. A jelenlegi
+        alapbeállítás a pontos mondathatárokat részesíti előnyben; emiatt a tényleges
+        exportidő hosszabb lehet, miközben a GPU batch és a párhuzamos export worker
+        továbbra is használható.
+      </p>
       <div class="docs-two-column">
         <div>
           <h3>GPU ellenőrzése</h3>
@@ -762,6 +771,14 @@
         <details>
           <summary>Importáláskor nem indul el a szereplőelemzés</summary>
           <div><p>A <strong>One narrator</strong> mód szándékosan kihagyja az elemzést. Külön szereplőhangokhoz válaszd a <strong>Character voices</strong> módot, és előtte állíts be működő helyi LLM-végpontot és modellnevet a Settings oldalon.</p></div>
+        </details>
+        <details>
+          <summary>Az egy-két szavas válaszok rossz sorrendben vagy másik sor részeként hallatszanak</summary>
+          <div><p>Az Auris már minden szövegegységet külön hullámformaként generál, és verziózott cache-sel elveti a korábban karakterszám alapján visszavágott hangokat. Frissítés után indítsd újra a szervert; az érintett szegmensek az első lejátszáskor vagy exportkor újragenerálódnak.</p></div>
+        </details>
+        <details>
+          <summary>A klónozott szereplők hangereje eltér egymástól</summary>
+          <div><p>A Settings → Output Defaults alatt hagyd bekapcsolva a <strong>Studio mastering for exports</strong> lehetőséget. Az FFmpeg a kész fejezetet finoman kompresszálja, majd két menetben egységes loudness-célra állítja. Ehhez az <code>ffmpeg</code> parancsnak elérhetőnek kell lennie a PATH-ban.</p></div>
         </details>
         <details>
           <summary>Az MP3 export nem készül el</summary>

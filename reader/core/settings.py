@@ -23,6 +23,7 @@ _DEFAULT_HIGGS_MODEL_PATH = str(_REPO_ROOT / 'model_backup' / 'Higgs-TTS-3-4B')
 LEGACY_NARRATOR_INSTRUCT = 'female, middle-aged, moderate pitch, american accent'
 DEFAULT_NARRATOR_INSTRUCT = 'male, elderly, low pitch, british accent'
 TTS_EXPRESSION_POLICY_VERSION = 2
+TTS_SEGMENT_BOUNDARY_POLICY_VERSION = 1
 
 DEFAULTS: dict = {
     # Active TTS engine. Each engine keeps an independent model configuration.
@@ -79,16 +80,17 @@ DEFAULTS: dict = {
     # Internal migration marker. Version 2 stops treating OmniVoice's literal
     # "oh/ah" non-verbal tags as silent punctuation/prosody controls.
     'tts_expression_policy_version': TTS_EXPRESSION_POLICY_VERSION,
+    # Version 1 disables proportional waveform splitting of coalesced lines.
+    'tts_segment_boundary_policy_version': TTS_SEGMENT_BOUNDARY_POLICY_VERSION,
 
     # How many segments to synthesize in one OmniVoice.generate() call.
     # 0 = auto from free VRAM (recommended). Larger values keep the GPU busier.
     # On OOM the engine automatically halves the batch and retries.
     'tts_batch_size': 0,
 
-    # Merge consecutive same-voice short lines up to this many characters before
-    # synthesis (export/playback batch path). Reduces diffusion-call overhead.
-    # 0 = disabled. ~720 is a strong speed win on audiobooks.
-    'tts_coalesce_chars': 720,
+    # Exact sentence audio boundaries take priority over unsafe waveform
+    # splitting. GPU batching still combines independent synthesis requests.
+    'tts_coalesce_chars': 0,
 
     # OmniVoice iterative decoding steps for playback and export.
     # Higher = better quality but slower. 16 is a good default; 32 is max quality.
@@ -106,6 +108,8 @@ DEFAULTS: dict = {
     # Export defaults
     'audio_format': 'wav',
     'subtitle_format': 'ass',
+    # Conservative FFmpeg EQ/compression + two-pass chapter loudness matching.
+    'audio_mastering': True,
 
     # UI
     'theme': 'night',
@@ -155,6 +159,29 @@ def migrate_tts_expression_policy_version() -> bool:
         return False
 
     save({'tts_expression_policy_version': TTS_EXPRESSION_POLICY_VERSION})
+    return True
+
+
+def migrate_tts_segment_boundary_policy_version() -> bool:
+    """Disable unsafe line coalescing once and mark cached segments stale."""
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, encoding='utf-8') as f:
+                saved = json.load(f)
+        else:
+            saved = {}
+        previous = int(saved.get('tts_segment_boundary_policy_version', 0))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        previous = 0
+
+    if previous == TTS_SEGMENT_BOUNDARY_POLICY_VERSION:
+        return False
+
+    save({
+        'tts_segment_boundary_policy_version':
+            TTS_SEGMENT_BOUNDARY_POLICY_VERSION,
+        'tts_coalesce_chars': 0,
+    })
     return True
 
 
