@@ -64,16 +64,8 @@
     <div class="speaker-edit-banner hidden" id="speaker-edit-banner">
       <div>
         <strong>Speaker review</strong>
-        <span>Each shaded row is one spoken sentence. Change a speaker inline; changes save immediately.</span>
+        <span>Every sentence in this chapter is shown. Choose a speaker, then drag the end marker until the full spoken passage is highlighted.</span>
       </div>
-      <label class="speaker-turn-scope" for="speaker-turn-scope">
-        Change
-        <select id="speaker-turn-scope">
-          <option value="turn_tail" selected>This sentence and the rest of the turn</option>
-          <option value="sentence">This sentence only</option>
-          <option value="turn">The whole dialogue turn</option>
-        </select>
-      </label>
       <button class="btn btn-sm btn-ghost" onclick="toggleSpeakerEditMode()">Done</button>
     </div>
     {% endif %}
@@ -114,16 +106,29 @@
              maxlength="100" autocomplete="off" placeholder="Character name">
     </div>
     <p class="speaker-editor-help">
-      The correction is saved for this line and will be used for playback and export.
+      The first sentence is fixed. Drag the marker to include every sentence or short fragment spoken by this character.
     </p>
-    <label class="speaker-editor-scope" for="speaker-editor-scope">
-      Apply this correction to
-      <select id="speaker-editor-scope">
-        <option value="turn_tail" selected>This sentence and the rest of the turn</option>
-        <option value="sentence">This sentence only</option>
-        <option value="turn">The whole dialogue turn</option>
-      </select>
-    </label>
+    <div class="speaker-range-editor">
+      <div class="speaker-range-heading">
+        <span>Spoken text range</span>
+        <strong id="speaker-range-count">1 sentence</strong>
+      </div>
+      <div class="speaker-range-control">
+        <button type="button" class="btn btn-sm btn-ghost"
+                aria-label="Shorten spoken range"
+                onclick="adjustSpeakerRange(-1)">&#8722;</button>
+        <input id="speaker-range-end" type="range" min="0" max="0" value="0"
+               aria-label="Last sentence spoken by this character"
+               oninput="previewSpeakerRange()">
+        <button type="button" class="btn btn-sm btn-ghost"
+                aria-label="Extend spoken range"
+                onclick="adjustSpeakerRange(1)">+</button>
+      </div>
+      <div class="speaker-range-endpoint">
+        <span>Ends with</span>
+        <strong id="speaker-range-end-text"></strong>
+      </div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeSpeakerEditor()">Cancel</button>
       <button class="btn btn-primary" id="speaker-editor-save"

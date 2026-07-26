@@ -753,15 +753,43 @@ def update_speaker_annotation(book_id, chapter_id):
         units = enrichment.build_speaker_units(chapter['content'])
         if unit_index < 0 or unit_index >= len(units):
             return jsonify({'error': 'Speaker unit not found'}), 404
+        annotation_rows = conn.execute(
+            'SELECT unit_index, speaker_name FROM speaker_annotations '
+            'WHERE chapter_id=?',
+            (chapter_id,),
+        ).fetchall()
+        effective_annotations = enrichment.expand_speaker_annotations(
+            chapter['content'],
+            {
+                int(row['unit_index']): str(row['speaker_name'] or '')
+                for row in annotation_rows
+            },
+        )
         unit = units[unit_index]
         requested_scope = str(body.get('scope') or '').strip().lower()
         if not requested_scope:
             requested_scope = 'turn' if body.get('apply_to_turn') else 'sentence'
-        if requested_scope not in {'sentence', 'turn_tail', 'turn'}:
+        if requested_scope not in {'sentence', 'turn_tail', 'turn', 'range'}:
             return jsonify({'error': 'Invalid speaker correction scope'}), 400
 
         target_indexes = [unit_index]
-        if requested_scope != 'sentence' and unit.get('turn_index') is not None:
+        range_end_unit_index = unit_index
+        if requested_scope == 'range':
+            try:
+                range_end_unit_index = int(body.get('range_end_unit_index'))
+            except (TypeError, ValueError):
+                return jsonify({'error': 'A valid range end is required'}), 400
+            if (
+                range_end_unit_index < unit_index
+                or range_end_unit_index >= len(units)
+            ):
+                return jsonify({'error': 'Speaker range is invalid'}), 400
+            if range_end_unit_index - unit_index > 200:
+                return jsonify({
+                    'error': 'Speaker range cannot exceed 201 text units'
+                }), 400
+            target_indexes = list(range(unit_index, range_end_unit_index + 1))
+        elif requested_scope != 'sentence' and unit.get('turn_index') is not None:
             target_indexes = [
                 int(candidate['index'])
                 for candidate in units
@@ -775,6 +803,7 @@ def update_speaker_annotation(book_id, chapter_id):
 
         canonical_name = ''
         character_id = None
+        boundary_clear_indexes = []
         if speaker_name:
             existing = conn.execute(
                 'SELECT id, name FROM characters '
@@ -814,6 +843,40 @@ def update_speaker_annotation(book_id, chapter_id):
                         canonical_name, 'manual',
                     ),
                 )
+
+            # An explicit range has an exact endpoint. Clear any old,
+            # contiguous assignment to the same speaker after that endpoint;
+            # otherwise the reader would merge the automatic tail back into
+            # the range the next time the editor is opened.
+            if requested_scope == 'range':
+                canonical_key = canonical_name.casefold()
+                next_index = target_indexes[-1] + 1
+                while (
+                    next_index < len(units)
+                    and str(effective_annotations.get(next_index) or '')
+                    .strip()
+                    .casefold() == canonical_key
+                ):
+                    boundary_clear_indexes.append(next_index)
+                    next_index += 1
+
+                for clear_index in boundary_clear_indexes:
+                    clear_unit = units[clear_index]
+                    conn.execute(
+                        'INSERT INTO speaker_annotations '
+                        '(book_id, chapter_id, unit_index, unit_text, '
+                        'speaker_name, confidence, source) '
+                        'VALUES (?,?,?,?,?,1.0,?) '
+                        'ON CONFLICT(chapter_id, unit_index) DO UPDATE SET '
+                        'unit_text=excluded.unit_text, '
+                        'speaker_name=excluded.speaker_name, '
+                        'confidence=excluded.confidence, '
+                        'source=excluded.source',
+                        (
+                            book_id, chapter_id, clear_index,
+                            clear_unit['text'], '', 'manual',
+                        ),
+                    )
         else:
             for target_index in target_indexes:
                 target_unit = units[target_index]
@@ -850,7 +913,10 @@ def update_speaker_annotation(book_id, chapter_id):
         'character_id': character_id,
         'source': 'manual',
         'updated_units': len(target_indexes),
+        'assigned_units': len(target_indexes),
+        'boundary_cleared_units': len(boundary_clear_indexes),
         'scope': requested_scope,
+        'range_end_unit_index': target_indexes[-1],
         'segments_cleared': True,
     })
 

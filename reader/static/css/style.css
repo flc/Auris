@@ -753,6 +753,23 @@ code {
   -webkit-box-decoration-break: clone;
 }
 .speaker-continuation { margin-left: 1px; }
+.sentence.speaker-range-hover {
+  background: color-mix(in srgb, var(--speaker-color) 28%, var(--bg2));
+  box-shadow: inset 0 -2px 0 var(--speaker-color);
+  outline: 1px solid color-mix(in srgb, var(--speaker-color) 72%, transparent);
+  outline-offset: 1px;
+}
+.sentence.speaker-range-hover .speaker-label {
+  border-color: var(--speaker-color);
+  background: color-mix(in srgb, var(--speaker-color) 24%, var(--bg2));
+  color: var(--text);
+  filter: brightness(1.12);
+}
+.sentence.speaker-range-preview {
+  background: color-mix(in srgb, var(--accent) 24%, var(--bg2));
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 .speaker-label {
   display: inline-flex; align-items: center; gap: 5px;
@@ -781,28 +798,11 @@ code {
 .speaker-edit-banner strong {
   display: block; margin-bottom: 2px; color: var(--accent); font-size: .78rem;
 }
-.speaker-turn-scope,
-.speaker-editor-scope {
-  display: flex; align-items: center; gap: 7px; color: var(--text2);
-  font-size: .72rem; cursor: pointer;
-}
-.speaker-turn-scope select,
-.speaker-editor-scope select {
-  min-width: 210px; padding: 6px 8px;
-  border: 1px solid var(--border); border-radius: 3px;
-  background: var(--bg); color: var(--text); font: inherit;
-}
-.speaker-editor-scope {
-  justify-content: space-between;
-  margin: 0 0 20px; padding: 10px 12px; border: 1px solid var(--border);
-  border-radius: var(--radius); background: var(--bg);
-}
-
 .chapter-content.speaker-edit-active { max-width: 1120px; }
 .speaker-edit-active .chapter-text-flow {
   display: flex; flex-wrap: wrap; gap: 2px 0; align-items: baseline;
 }
-.speaker-edit-active .sentence.speaker-candidate {
+.speaker-edit-active .sentence {
   display: grid; grid-template-columns: minmax(175px, 215px) 1fr;
   width: 100%; align-items: start; gap: 14px;
   margin: 5px 0; padding: 10px 12px;
@@ -811,7 +811,7 @@ code {
   background: color-mix(in srgb, var(--speaker-color) 8%, var(--bg2));
   line-height: 1.55;
 }
-.speaker-edit-active .speaker-candidate .speaker-label { display: none; }
+.speaker-edit-active .sentence .speaker-label { display: none; }
 .speaker-edit-active .speaker-inline-select {
   display: block; width: 100%; min-width: 0; padding: 6px 8px;
   border: 1px solid var(--border); border-radius: 3px;
@@ -820,11 +820,11 @@ code {
 .speaker-edit-active .speaker-inline-select:focus {
   outline: 1px solid var(--accent); border-color: var(--accent);
 }
-.speaker-edit-active .speaker-candidate .sentence-text {
+.speaker-edit-active .sentence .sentence-text {
   min-width: 0; color: var(--text);
 }
 
-.speaker-editor { width: min(92vw, 500px); }
+.speaker-editor { width: min(92vw, 620px); }
 .speaker-editor-quote {
   max-height: 150px; overflow-y: auto; margin-bottom: 18px; padding: 12px 14px;
   border-left: 2px solid var(--accent); background: var(--bg);
@@ -836,7 +836,34 @@ code {
 }
 .speaker-editor .select-input { width: 100%; }
 .speaker-editor-help {
-  margin: 12px 0 20px; color: var(--text3); font-size: .72rem; line-height: 1.45;
+  margin: 12px 0 14px; color: var(--text3); font-size: .72rem; line-height: 1.45;
+}
+.speaker-range-editor {
+  margin: 0 0 20px; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg);
+}
+.speaker-range-heading,
+.speaker-range-endpoint {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  color: var(--text2); font: .7rem/1.4 var(--ui-font);
+}
+.speaker-range-heading strong { color: var(--accent); }
+.speaker-range-control {
+  display: grid; grid-template-columns: 34px 1fr 34px;
+  align-items: center; gap: 9px; margin: 10px 0 8px;
+}
+.speaker-range-control .btn {
+  width: 34px; height: 30px; padding: 0; justify-content: center;
+}
+.speaker-range-editor input[type="range"] {
+  display: block; width: 100%; margin: 0;
+  accent-color: var(--accent); cursor: ew-resize;
+}
+.speaker-range-endpoint span { flex: 0 0 auto; }
+.speaker-range-endpoint strong {
+  overflow: hidden; color: var(--text); font-weight: 500;
+  text-align: right; white-space: nowrap; text-overflow: ellipsis;
 }
 
 .placeholder-text {
@@ -1402,9 +1429,11 @@ code {
     align-items: flex-start; flex-wrap: wrap; padding: 10px 12px;
   }
   .speaker-edit-banner > div { flex-basis: 100%; }
-  .speaker-edit-active .sentence.speaker-candidate {
+  .speaker-edit-active .sentence {
     grid-template-columns: 1fr; gap: 8px;
   }
+  .speaker-range-heading,
+  .speaker-range-endpoint { align-items: flex-start; }
   .import-dialog { width: min(94vw, 610px); }
   .playback-bar {
     height: auto;

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 import app as app_module
 from core import database
@@ -198,10 +199,122 @@ class SpeakerCorrectionsApiTest(unittest.TestCase):
             [None, None],
         )
 
+    def test_can_assign_explicit_range_including_missed_narration(self):
+        with database.get_conn() as conn:
+            conn.execute(
+                "UPDATE chapters SET content=? WHERE id=2",
+                (
+                    "Narration before. Missed spoken sentence. "
+                    "A few more spoken words. Narration after.",
+                ),
+            )
+            conn.execute(
+                "DELETE FROM speaker_annotations WHERE chapter_id=2"
+            )
+
+        response = self.client.put(
+            "/api/books/1/chapters/2/speaker-annotations",
+            json={
+                "unit_index": 1,
+                "range_end_unit_index": 2,
+                "speaker_name": "Alice",
+                "scope": "range",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["updated_units"], 2)
+        self.assertEqual(response.get_json()["range_end_unit_index"], 2)
+        segments = self.client.get("/api/tts/segments/1/2").get_json()
+        self.assertEqual(
+            [segment["character_name"] for segment in segments],
+            [None, "Alice", "Alice", None],
+        )
+        self.assertEqual(
+            [segment["speaker_source"] for segment in segments[1:3]],
+            ["manual", "manual"],
+        )
+
+    def test_explicit_range_clears_old_contiguous_speaker_tail(self):
+        content = (
+            "First spoken sentence. Second spoken sentence. "
+            "Old extra sentence. A different speaker follows."
+        )
+        units = app_module.enrichment.build_speaker_units(content)
+        self.assertEqual(len(units), 4)
+        with database.get_conn() as conn:
+            conn.execute(
+                "UPDATE chapters SET content=? WHERE id=2",
+                (content,),
+            )
+            conn.execute(
+                "INSERT INTO characters "
+                "(book_id, name, frequency, instruct) "
+                "VALUES (1, 'Bob', 1, 'male voice')"
+            )
+            conn.execute(
+                "DELETE FROM speaker_annotations WHERE chapter_id=2"
+            )
+            for unit_index, speaker_name in enumerate(
+                ("Alice", "Alice", "Alice", "Bob")
+            ):
+                conn.execute(
+                    "INSERT INTO speaker_annotations "
+                    "(book_id, chapter_id, unit_index, unit_text, "
+                    "speaker_name, confidence, source) "
+                    "VALUES (1, 2, ?, ?, ?, 0.8, 'automatic')",
+                    (unit_index, units[unit_index]["text"], speaker_name),
+                )
+
+        response = self.client.put(
+            "/api/books/1/chapters/2/speaker-annotations",
+            json={
+                "unit_index": 0,
+                "range_end_unit_index": 1,
+                "speaker_name": "Alice",
+                "scope": "range",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["range_end_unit_index"], 1)
+        self.assertEqual(payload["assigned_units"], 2)
+        self.assertEqual(payload["boundary_cleared_units"], 1)
+        segments = self.client.get("/api/tts/segments/1/2").get_json()
+        self.assertEqual(
+            [segment["character_name"] for segment in segments],
+            ["Alice", "Alice", None, "Bob"],
+        )
+        self.assertEqual(segments[2]["speaker_source"], "manual")
+        self.assertEqual(segments[3]["speaker_source"], "automatic")
+
+    def test_rejects_reversed_explicit_speaker_range(self):
+        response = self.client.put(
+            "/api/books/1/chapters/2/speaker-annotations",
+            json={
+                "unit_index": 1,
+                "range_end_unit_index": 0,
+                "speaker_name": "Alice",
+                "scope": "range",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("range", response.get_json()["error"].lower())
+
     def test_reader_contains_speaker_editor(self):
         response = self.client.get("/reader/1")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'id="speaker-editor-overlay"', response.data)
+        self.assertIn(b'id="speaker-range-end"', response.data)
+
+        reader_script = (
+            Path(__file__).resolve().parents[1] / "static" / "js" / "reader.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("range_end_unit_index", reader_script)
+        self.assertIn("previewStoredSpeakerRange", reader_script)
+        self.assertIn("getStoredSpeakerRangeEnd", reader_script)
+        self.assertNotIn("speaker-editor-turn-scope", reader_script)
         self.assertIn(b"Who speaks this line?", response.data)
 
 

@@ -187,8 +187,8 @@
             </tr>
             <tr>
               <td><strong>Editing speakers</strong></td>
-              <td>A Reader minden beszédjelölt mondatát színezett sorban, közvetlen szereplőválasztóval mutatja.</td>
-              <td>Lejátszás vagy export előtt a gépi eredmény gyors átnézéséhez.</td>
+              <td>A Reader minden mondatát — a narrációnak felismert részeket is — külön szerkesztősorban, szereplőválasztóval mutatja.</td>
+              <td>A gépi eredmény javításához és teljesen kihagyott megszólalások beszúrásához.</td>
             </tr>
           </tbody>
         </table>
@@ -198,17 +198,19 @@
             <ul class="docs-check-list">
               <li>A színezett tartomány egy azonos beszélőhöz rendelt megszólalást mutat.</li>
               <li>A névcímke a megszólalás elején jelenik meg; a folytató mondatok ugyanazzal a színnel maradnak jelölve.</li>
-              <li>Az <strong>Editing speakers</strong> gomb teljes szélességű, gyorsan átnézhető szerkesztősorokra vált.</li>
+              <li>A névcímkére mutatva a Reader jól láthatóan kiemeli a hozzá tartozó teljes, mentett beszédtartományt.</li>
+              <li>Az <strong>Editing speakers</strong> gomb az aktív fejezet minden mondatát teljes szélességű, gyorsan átnézhető szerkesztősorokban mutatja; a fejezetlistával a könyv teljes szövege végigjárható.</li>
               <li>A kézzel mentett hozzárendelés felülírja a későbbi automatikus eredményt is.</li>
             </ul>
           </div>
           <div>
-            <h3>Javítási hatókörök</h3>
+            <h3>Húzható beszédtartomány</h3>
             <ul class="docs-check-list">
-              <li><strong>This sentence only:</strong> csak a kiválasztott mondatot módosítja.</li>
-              <li><strong>This sentence and the rest of the turn:</strong> az adott mondattól a megszólalás végéig javít. Ezzel vágható le a túl hosszúra felismert beszéd.</li>
-              <li><strong>The whole dialogue turn:</strong> a teljes összetartozó megszólalást egyszerre módosítja.</li>
-              <li><strong>Narration / no speaker:</strong> visszaadja a kijelölt részt a narrátor hangjának.</li>
+              <li>A kiválasztott mondat a tartomány rögzített kezdete.</li>
+              <li>A csúszkával állítható be, melyik mondatnál vagy rövid szövegegységnél ér véget a szereplő beszéde.</li>
+              <li>A mínusz és plusz gomb egy-egy szövegegységgel rövidíti vagy hosszabbítja a kijelölést.</li>
+              <li>A kijelölt szöveg élőben kiemelődik, a modal pedig mutatja a mondatok számát és az utolsó szövegrészt.</li>
+              <li><strong>Narration / no speaker</strong> választásával ugyanígy adható vissza egy tartomány a narrátor hangjának.</li>
             </ul>
           </div>
         </div>
@@ -751,7 +753,11 @@
         </details>
         <details>
           <summary>A nyelvi modell túl hosszúra jelölte egy szereplő beszédét</summary>
-          <div><p>Nyisd meg a Readert, kapcsold be az <strong>Editing speakers</strong> módot, majd annál az első mondatnál, amelynek már a narrátorhoz kell tartoznia, válaszd a <strong>Narration / no speaker</strong> értéket. A <strong>This sentence and the rest of the turn</strong> hatókör az adott ponttól a megszólalás végéig javítja a hozzárendelést.</p></div>
+          <div><p>Nyisd meg a Readert, kapcsold be az <strong>Editing speakers</strong> módot, majd annál az első mondatnál, amelynek már a narrátorhoz kell tartoznia, válaszd a <strong>Narration / no speaker</strong> értéket. A csúszkával vagy a plusz/mínusz gombokkal jelöld ki a narrátorhoz visszaadandó teljes tartományt, majd mentsd a módosítást.</p></div>
+        </details>
+        <details>
+          <summary>A nyelvi modell egy teljes megszólalást narrációnak hagyott</summary>
+          <div><p>Kapcsold be az <strong>Editing speakers</strong> módot. Itt minden mondat mellett megjelenik a szereplőválasztó, a narrációként kezelt részeknél is. Az első kihagyott mondatnál válaszd ki a szereplőt, húzd a tartomány végét a megszólalás utolsó szövegegységéig, majd kattints a <strong>Save speaker</strong> gombra.</p></div>
         </details>
         <details>
           <summary>Importáláskor nem indul el a szereplőelemzés</summary>

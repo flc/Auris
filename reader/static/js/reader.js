@@ -17,6 +17,7 @@ let _lastSavedProgressKey = '';
 let _ignoreScrollTrackingUntil = 0;
 let speakerCharacters = [];
 let editingSpeakerSegmentIndex = null;
+let editingSpeakerRangeEndIndex = null;
 let speakerEditMode = false;
 
 // Two audio elements for gapless double-buffering
@@ -305,14 +306,22 @@ function renderContent(segs) {
       seg.speaker_continuation ? 'speaker-continuation' : 'speaker-turn-start',
     ].filter(Boolean).join(' ');
     const canEditSpeaker = seg.unit_index !== null &&
-      seg.unit_index !== undefined &&
-      (seg.speaker_candidate || seg.character_name);
+      seg.unit_index !== undefined;
     const showLabel = canEditSpeaker &&
+      (seg.speaker_candidate || seg.character_name) &&
       (!seg.speaker_continuation || !seg.character_name);
+    const speakerRangeEnd = getStoredSpeakerRangeEnd(i, segs);
+    const speakerRangeLength = speakerRangeEnd - i + 1;
     const speakerLabel = showLabel
       ? `<button class="speaker-label${seg.character_name ? '' : ' unassigned'}"
            type="button"
-           title="${seg.character_name ? 'Speaker assignment' : 'Possible dialogue without an assigned speaker'} — click to correct"
+           title="${seg.character_name
+             ? `${speakerRangeLength} ${speakerRangeLength === 1 ? 'sentence' : 'sentences'} assigned to ${esc(seg.character_name)}`
+             : 'Possible dialogue without an assigned speaker'} — hover to highlight, click to correct"
+           onmouseenter="previewStoredSpeakerRange(${i})"
+           onmouseleave="clearStoredSpeakerRangePreview()"
+           onfocus="previewStoredSpeakerRange(${i})"
+           onblur="clearStoredSpeakerRangePreview()"
            onclick="event.stopPropagation();openSpeakerEditor(${i})">
            <span aria-hidden="true">${seg.speaker_source === 'manual' ? '&#10003;' : '&#10022;'}</span>
            ${esc(seg.character_name || 'Assign speaker')}
@@ -341,7 +350,39 @@ function renderContent(segs) {
   container.style.fontFamily = FONT_FAMILIES[fontFamily] || FONT_FAMILIES.serif;
 }
 
+function getStoredSpeakerRangeEnd(segmentIndex, sourceSegments = segments) {
+  const storedName = String(sourceSegments[segmentIndex]?.character_name || '');
+  if (!storedName) return segmentIndex;
+
+  let end = segmentIndex;
+  while (
+    end + 1 < sourceSegments.length &&
+    String(sourceSegments[end + 1]?.character_name || '') === storedName
+  ) {
+    end += 1;
+  }
+  return end;
+}
+
+function clearStoredSpeakerRangePreview() {
+  document.querySelectorAll('.sentence.speaker-range-hover')
+    .forEach(element => element.classList.remove('speaker-range-hover'));
+}
+
+function previewStoredSpeakerRange(segmentIndex) {
+  clearStoredSpeakerRangePreview();
+  const end = getStoredSpeakerRangeEnd(segmentIndex);
+  for (let index = segmentIndex; index <= end; index += 1) {
+    document.querySelector(`.sentence[data-idx="${index}"]`)
+      ?.classList.add('speaker-range-hover');
+  }
+}
+
 function jumpTo(idx) {
+  if (speakerEditMode) {
+    openSpeakerEditor(idx);
+    return;
+  }
   if (isPlaying) playSegment(idx);
   else { setCurrentSegment(idx, { highlight: true, save: true }); }
 }
@@ -394,13 +435,16 @@ function toggleSpeakerEditMode() {
   highlightSegment(currentSegIdx, { behavior: 'auto' });
 }
 
-function openSpeakerEditor(segmentIndex) {
+function openSpeakerEditor(segmentIndex, proposedSpeakerName = undefined) {
   const seg = segments[segmentIndex];
   if (!seg || seg.unit_index === null || seg.unit_index === undefined) return;
+  clearStoredSpeakerRangePreview();
   editingSpeakerSegmentIndex = segmentIndex;
 
   const select = document.getElementById('speaker-editor-select');
-  const currentName = String(seg.character_name || '');
+  const currentName = proposedSpeakerName === undefined
+    ? String(seg.character_name || '')
+    : String(proposedSpeakerName || '');
   select.innerHTML = [
     '<option value="">No speaker / narration</option>',
     ...speakerCharacters.map(character =>
@@ -414,13 +458,17 @@ function openSpeakerEditor(segmentIndex) {
   );
   select.value = currentName && known ? currentName : (currentName ? '__new__' : '');
   document.getElementById('speaker-editor-new').value =
-    currentName && !known ? currentName : '';
-  document.getElementById('speaker-editor-quote').textContent = seg.text;
-  const turnScope = document.getElementById('speaker-editor-turn-scope');
-  const hasTurn = seg.speaker_turn_index !== null &&
-    seg.speaker_turn_index !== undefined;
-  turnScope.checked = hasTurn;
-  turnScope.disabled = !hasTurn;
+    currentName && !known && currentName !== '__new__' ? currentName : '';
+
+  const initialEnd = proposedSpeakerName === undefined
+    ? getStoredSpeakerRangeEnd(segmentIndex)
+    : segmentIndex;
+  const range = document.getElementById('speaker-range-end');
+  range.min = String(segmentIndex);
+  range.max = String(Math.min(segments.length - 1, segmentIndex + 200));
+  range.value = String(initialEnd);
+  editingSpeakerRangeEndIndex = initialEnd;
+  previewSpeakerRange();
   toggleNewSpeakerInput();
   document.getElementById('speaker-editor-overlay').classList.remove('hidden');
   if (select.value === '__new__') {
@@ -430,6 +478,40 @@ function openSpeakerEditor(segmentIndex) {
   }
 }
 
+function previewSpeakerRange() {
+  const start = editingSpeakerSegmentIndex;
+  if (start === null || start === undefined) return;
+  const range = document.getElementById('speaker-range-end');
+  const end = Math.max(start, clampSegmentIndex(range.value));
+  range.value = String(end);
+  editingSpeakerRangeEndIndex = end;
+
+  const selected = segments.slice(start, end + 1);
+  document.getElementById('speaker-editor-quote').textContent =
+    selected.map(segment => segment.text).join(' ');
+  document.getElementById('speaker-range-count').textContent =
+    `${selected.length} ${selected.length === 1 ? 'sentence' : 'sentences'}`;
+  document.getElementById('speaker-range-end-text').textContent =
+    segments[end]?.text || '';
+
+  document.querySelectorAll('.sentence.speaker-range-preview')
+    .forEach(element => element.classList.remove('speaker-range-preview'));
+  for (let index = start; index <= end; index += 1) {
+    document.querySelector(`.sentence[data-idx="${index}"]`)
+      ?.classList.add('speaker-range-preview');
+  }
+}
+
+function adjustSpeakerRange(delta) {
+  const range = document.getElementById('speaker-range-end');
+  const next = Number(range.value) + Number(delta || 0);
+  range.value = String(Math.max(
+    Number(range.min),
+    Math.min(Number(range.max), next),
+  ));
+  previewSpeakerRange();
+}
+
 function toggleNewSpeakerInput() {
   const isNew = document.getElementById('speaker-editor-select').value === '__new__';
   document.getElementById('speaker-editor-new-wrap').classList.toggle('hidden', !isNew);
@@ -437,7 +519,10 @@ function toggleNewSpeakerInput() {
 
 function closeSpeakerEditor() {
   document.getElementById('speaker-editor-overlay').classList.add('hidden');
+  document.querySelectorAll('.sentence.speaker-range-preview')
+    .forEach(element => element.classList.remove('speaker-range-preview'));
   editingSpeakerSegmentIndex = null;
+  editingSpeakerRangeEndIndex = null;
 }
 
 async function saveSpeakerCorrection() {
@@ -455,11 +540,17 @@ async function saveSpeakerCorrection() {
     return;
   }
 
-  const scope = document.getElementById('speaker-editor-scope').value;
+  const rangeEndIndex = editingSpeakerRangeEndIndex ?? segmentIndex;
+  const rangeEndUnitIndex = segments[rangeEndIndex]?.unit_index;
   const saveButton = document.getElementById('speaker-editor-save');
   saveButton.disabled = true;
   try {
-    await persistSpeakerCorrection(segmentIndex, speakerName, scope);
+    await persistSpeakerCorrection(
+      segmentIndex,
+      speakerName,
+      'range',
+      rangeEndUnitIndex,
+    );
     closeSpeakerEditor();
   } finally {
     saveButton.disabled = false;
@@ -467,19 +558,17 @@ async function saveSpeakerCorrection() {
 }
 
 async function quickAssignSpeaker(segmentIndex, select) {
-  if (select.value === '__new__') {
-    openSpeakerEditor(segmentIndex);
-    return;
-  }
-  const scope = document.getElementById('speaker-turn-scope');
-  await persistSpeakerCorrection(
-    segmentIndex,
-    select.value,
-    scope?.value || 'turn_tail',
-  );
+  const proposedName = select.value;
+  openSpeakerEditor(segmentIndex, proposedName);
+  select.value = String(segments[segmentIndex]?.character_name || '');
 }
 
-async function persistSpeakerCorrection(segmentIndex, speakerName, scope) {
+async function persistSpeakerCorrection(
+  segmentIndex,
+  speakerName,
+  scope,
+  rangeEndUnitIndex = null,
+) {
   const seg = segments[segmentIndex];
   if (!seg) return;
   const container = document.getElementById('chapter-content');
@@ -494,6 +583,7 @@ async function persistSpeakerCorrection(segmentIndex, speakerName, scope) {
           unit_index: seg.unit_index,
           speaker_name: speakerName || null,
           scope: scope || 'sentence',
+          range_end_unit_index: rangeEndUnitIndex,
         }),
       }
     );
