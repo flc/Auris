@@ -2,6 +2,19 @@
   const links = [...document.querySelectorAll('.docs-toc a')];
   const sections = links.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
 
+  links.forEach(link => {
+    link.addEventListener('click', event => {
+      const target = document.querySelector(link.getAttribute('href'));
+      if (!target) return;
+      event.preventDefault();
+      const header = document.querySelector('.topnav');
+      const offset = (header?.getBoundingClientRect().height || 0) + 18;
+      const top = target.getBoundingClientRect().top + window.scrollY - offset;
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      history.replaceState(null, '', link.getAttribute('href'));
+    });
+  });
+
   if ('IntersectionObserver' in window) {
     const observer = new IntersectionObserver(entries => {
       const visible = entries.filter(entry => entry.isIntersecting)

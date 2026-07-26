@@ -9,6 +9,7 @@
         <a href="#overview" class="active">Áttekintés</a>
         <a href="#auris">Auris funkciók</a>
         <a href="#workflow">Munkafolyamat</a>
+        <a href="#speaker-review">Szereplők ellenőrzése</a>
         <a href="#llm-detection">Helyi LLM felismerés</a>
         <a href="#voices">Hangok és klónozás</a>
         <a href="#omnivoice">OmniVoice</a>
@@ -86,10 +87,11 @@
         <div>
           <h3>Könyvtár és olvasó</h3>
           <ul class="docs-check-list">
-            <li><strong>EPUB, PDF és TXT import</strong>, automatikus cím-, fejezet- és nyelvfelismeréssel.</li>
+            <li><strong>EPUB, PDF és TXT import</strong>, az importálás előtt választható egy narrátoros vagy szereplőhangos feldolgozással.</li>
             <li>Fejezetes tartalomjegyzék, olvasási időbecslés és fejezet-progressz.</li>
             <li>Automatikusan mentett olvasási pozíció és folytatás a Library oldalról.</li>
             <li>Könyvjelzők létrehozása, listázása, megnyitása és törlése.</li>
+            <li>Szereplőnként színezett párbeszédtartományok és közvetlen, mondatszintű beszélőjavítás.</li>
             <li>Night, Sepia, Paper és AMOLED téma; serif, sans-serif és monospace betű.</li>
             <li>Állítható betűméret, sorköz és felolvasási sebesség.</li>
           </ul>
@@ -125,26 +127,27 @@
         <span class="docs-section-index">02</span>
         <div>
           <h2>Ajánlott munkafolyamat</h2>
-          <p>A motorválasztás nem változtatja meg a könyv feldolgozásának fő lépéseit.</p>
+          <p>Az importálás csak a fájl és a narrációs mód jóváhagyása után indul el.</p>
         </div>
       </div>
       <div class="pipeline" aria-label="Az Auris feldolgozási folyamata">
-        <div class="pipeline-node"><span class="pipeline-icon">1</span><strong>Import</strong><small>EPUB · PDF · TXT</small></div>
+        <div class="pipeline-node"><span class="pipeline-icon">1</span><strong>Fájl</strong><small>EPUB · PDF · TXT</small></div>
         <span class="pipeline-connector" aria-hidden="true">→</span>
-        <div class="pipeline-node"><span class="pipeline-icon">2</span><strong>Elemzés</strong><small>fejezet · nyelv · szereplő</small></div>
+        <div class="pipeline-node"><span class="pipeline-icon">2</span><strong>Narráció</strong><small>egy hang · szereplőhangok</small></div>
         <span class="pipeline-connector" aria-hidden="true">→</span>
-        <div class="pipeline-node"><span class="pipeline-icon">3</span><strong>Voices</strong><small>narrátor · karakter · referencia</small></div>
+        <div class="pipeline-node"><span class="pipeline-icon">3</span><strong>Elemzés</strong><small>csak szereplőhangos módban</small></div>
         <span class="pipeline-connector" aria-hidden="true">→</span>
-        <div class="pipeline-node"><span class="pipeline-icon">4</span><strong>Hallgatás</strong><small>szegmens · puffer · cache</small></div>
+        <div class="pipeline-node"><span class="pipeline-icon">4</span><strong>Ellenőrzés</strong><small>beszélő · határ · hang</small></div>
         <span class="pipeline-connector" aria-hidden="true">→</span>
-        <div class="pipeline-node pipeline-output"><span class="pipeline-icon">5</span><strong>Export</strong><small>audio + felirat</small></div>
+        <div class="pipeline-node pipeline-output"><span class="pipeline-icon">5</span><strong>Lejátszás</strong><small>hallgatás · export</small></div>
       </div>
       <div class="docs-two-column">
         <div>
           <h3>Karakterfelismerés</h3>
           <p>
-            Import után az Auris a beállított helyi LLM-mel fejezetenként
-            azonosítja a szereplőket és a konkrét párbeszédek beszélőit.
+            Ha importáláskor a <strong>Character voices</strong> módot választod,
+            az Auris a beállított helyi LLM-mel fejezetenként azonosítja a
+            szereplőket és a konkrét párbeszédek beszélőit.
             LM Studio, Ollama és más OpenAI-kompatibilis <code>/v1</code>
             végpont használható. Az elemzés előtt a TTS modell kiürül a
             memóriából, az eredmény pedig tartósan a könyvhöz kerül. A régi
@@ -158,6 +161,56 @@
             számokat, dátumokat és pénzértékeket alakíthat beszélt formára.
             Magyar egész számokhoz az Auris a <code>num2words</code> útvonalát használja.
           </p>
+        </div>
+      </div>
+
+      <div class="settings-guide-wrap" id="speaker-review" style="margin-top:28px;scroll-margin-top:72px">
+        <h3>Importálási mód és szereplők ellenőrzése</h3>
+        <p>
+          A fájl kiválasztása önmagában még nem importál. Az összegző ablakban
+          előbb döntsd el, hogy a teljes könyvet egy narrátor olvassa-e, vagy
+          külön szereplőhangokat szeretnél. Az alapértelmezett
+          <strong>One narrator</strong> mód nem indít nyelvimodell-elemzést.
+        </p>
+        <table class="settings-guide">
+          <thead><tr><th>Mód vagy művelet</th><th>Mit csinál?</th><th>Mikor használd?</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>One narrator</strong></td>
+              <td>A narrációt és minden párbeszédet ugyanazzal a hanggal olvassa; a szereplőelemzés állapota <strong>skipped</strong>.</td>
+              <td>Ha gyors importot és egységes felolvasást szeretnél.</td>
+            </tr>
+            <tr>
+              <td><strong>Character voices</strong></td>
+              <td>A beállított helyi LLM felismeri a szereplőket és a beszédszakaszokat. Konfigurált LLM-végpont és modellnév szükséges.</td>
+              <td>Ha külön narrátor- és szereplőhangokat szeretnél.</td>
+            </tr>
+            <tr>
+              <td><strong>Editing speakers</strong></td>
+              <td>A Reader minden beszédjelölt mondatát színezett sorban, közvetlen szereplőválasztóval mutatja.</td>
+              <td>Lejátszás vagy export előtt a gépi eredmény gyors átnézéséhez.</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="docs-two-column" style="margin-top:24px">
+          <div>
+            <h3>Mit jelöl az olvasó?</h3>
+            <ul class="docs-check-list">
+              <li>A színezett tartomány egy azonos beszélőhöz rendelt megszólalást mutat.</li>
+              <li>A névcímke a megszólalás elején jelenik meg; a folytató mondatok ugyanazzal a színnel maradnak jelölve.</li>
+              <li>Az <strong>Editing speakers</strong> gomb teljes szélességű, gyorsan átnézhető szerkesztősorokra vált.</li>
+              <li>A kézzel mentett hozzárendelés felülírja a későbbi automatikus eredményt is.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Javítási hatókörök</h3>
+            <ul class="docs-check-list">
+              <li><strong>This sentence only:</strong> csak a kiválasztott mondatot módosítja.</li>
+              <li><strong>This sentence and the rest of the turn:</strong> az adott mondattól a megszólalás végéig javít. Ezzel vágható le a túl hosszúra felismert beszéd.</li>
+              <li><strong>The whole dialogue turn:</strong> a teljes összetartozó megszólalást egyszerre módosítja.</li>
+              <li><strong>Narration / no speaker:</strong> visszaadja a kijelölt részt a narrátor hangjának.</li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -215,10 +268,10 @@
         <div>
           <h3>Mi történik importkor?</h3>
           <ul class="docs-check-list">
-            <li>Az import elindít egy háttérben futó karakter- és beszélőelemzést.</li>
-            <li>Az Auris előbb leállítja és kiüríti a TTS modellt, hogy felszabadítsa a VRAM-ot.</li>
-            <li>A helyi LLM fejezetenként megkapja a számozott szövegegységeket.</li>
-            <li>Kanonikus szereplőlista és minden párbeszédhez külön beszélő-hozzárendelés készül.</li>
+            <li>A fájlválasztó után egy külön importablakban jóvá kell hagyni a narrációs módot.</li>
+            <li><strong>One narrator</strong> módban nincs háttérben futó LLM-feldolgozás; a könyv azonnal használható.</li>
+            <li><strong>Character voices</strong> módban az Auris előbb leállítja és kiüríti a TTS modellt, hogy felszabadítsa a VRAM-ot.</li>
+            <li>A helyi LLM fejezetenként megkapja a számozott szövegegységeket, majd kanonikus szereplőlistát és beszélő-hozzárendeléseket készít.</li>
             <li>Az eredmény tartósan a könyvhöz kerül; a Reader, Voice Studio, lejátszás és export ugyanazt használja.</li>
             <li>A TTS csak akkor töltődik vissza, amikor a felhasználó legközelebb ténylegesen felolvasást vagy hangelőnézetet kér.</li>
           </ul>
@@ -695,6 +748,14 @@
         <details>
           <summary>Megváltoztattam a hangot, de a régi felolvasás hallatszik</summary>
           <div><p>Mentsd a Voice Studio módosítását. Az Auris törli az érintett szegmensrekordokat, és új cache-kulccsal generál. Ha a böngészőben régi JavaScript fut, használj <code>Ctrl+F5</code>-öt.</p></div>
+        </details>
+        <details>
+          <summary>A nyelvi modell túl hosszúra jelölte egy szereplő beszédét</summary>
+          <div><p>Nyisd meg a Readert, kapcsold be az <strong>Editing speakers</strong> módot, majd annál az első mondatnál, amelynek már a narrátorhoz kell tartoznia, válaszd a <strong>Narration / no speaker</strong> értéket. A <strong>This sentence and the rest of the turn</strong> hatókör az adott ponttól a megszólalás végéig javítja a hozzárendelést.</p></div>
+        </details>
+        <details>
+          <summary>Importáláskor nem indul el a szereplőelemzés</summary>
+          <div><p>A <strong>One narrator</strong> mód szándékosan kihagyja az elemzést. Külön szereplőhangokhoz válaszd a <strong>Character voices</strong> módot, és előtte állíts be működő helyi LLM-végpontot és modellnevet a Settings oldalon.</p></div>
         </details>
         <details>
           <summary>Az MP3 export nem készül el</summary>
