@@ -70,6 +70,24 @@ async function deleteBook(e, id) {
 let pendingImportFile = null;
 let importSettings = null;
 
+function activeCharacterModel(settings) {
+  const provider = settings?.llm_provider === 'openai' ? 'openai' : 'local';
+  if (provider === 'openai') {
+    return {
+      configured: Boolean(settings.openai_api_key && settings.openai_model),
+      providerLabel: 'OpenAI',
+      model: settings.openai_model || '',
+      missingMessage: 'Character voices require an OpenAI API key and model in Settings.',
+    };
+  }
+  return {
+    configured: Boolean(settings?.llm_base_url && settings?.llm_model),
+    providerLabel: 'Local server',
+    model: settings?.llm_model || '',
+    missingMessage: 'Character voices require a local language model in Settings.',
+  };
+}
+
 document.getElementById('file-input').addEventListener('change', function() {
   const file = this.files[0];
   this.value = '';
@@ -88,12 +106,13 @@ async function openImportDialog(file) {
 
   try {
     importSettings = await fetch('/api/settings').then(r => r.json());
-    const configured = Boolean(importSettings.llm_base_url && importSettings.llm_model);
+    const activeModel = activeCharacterModel(importSettings);
     const note = document.getElementById('import-model-note');
-    note.className = `import-model-note ${configured ? 'ready' : 'warning'}`;
-    note.textContent = configured
-      ? `Character analysis model: ${importSettings.llm_model}`
-      : 'Character voices require a local language model in Settings.';
+    note.className =
+      `import-model-note ${activeModel.configured ? 'ready' : 'warning'}`;
+    note.textContent = activeModel.configured
+      ? `Character analysis: ${activeModel.providerLabel} · ${activeModel.model}`
+      : activeModel.missingMessage;
   } catch (_) {
     document.getElementById('import-model-note').textContent =
       'Could not read language-model settings.';
