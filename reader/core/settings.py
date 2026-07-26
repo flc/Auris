@@ -55,13 +55,16 @@ DEFAULTS: dict = {
     'narrator_instruct': DEFAULT_NARRATOR_INSTRUCT,
     'single_narrator_mode': False,
 
-    # Character and dialogue-speaker detection. "llm" uses any local
-    # OpenAI-compatible server (LM Studio, Ollama, llama.cpp); "legacy" keeps
-    # the original English spaCy/regex detector.
+    # Character and dialogue-speaker detection. "llm" can use either a local
+    # OpenAI-compatible server (LM Studio, Ollama, llama.cpp) or OpenAI's API;
+    # "legacy" keeps the original English spaCy/regex detector.
     'character_detection_mode': 'legacy',
+    'llm_provider': 'local',           # 'local' | 'openai'
     'llm_base_url': 'http://127.0.0.1:1234/v1',
     'llm_api_key': '',
     'llm_model': '',
+    'openai_api_key': '',
+    'openai_model': '',
     'llm_timeout_sec': 600,
     'llm_max_output_tokens': 8192,
     'llm_max_characters': 60,

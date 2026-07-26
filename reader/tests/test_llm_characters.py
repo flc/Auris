@@ -133,6 +133,32 @@ class SpeakerUnitTest(unittest.TestCase):
 
 
 class LLMBookAnalysisTest(unittest.TestCase):
+    @patch("core.llm_characters._request_json")
+    def test_openai_chat_uses_hosted_model_parameters(self, request_json):
+        request_json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '{"dialogues":[],"characters":[]}',
+                },
+            }],
+        }
+
+        result = llm_characters._chat(
+            base_url="https://api.openai.com/v1",
+            api_key="secret",
+            model="gpt-test",
+            prompt="Test",
+            timeout=30,
+            max_tokens=2048,
+            provider="openai",
+        )
+
+        self.assertEqual(result, {"dialogues": [], "characters": []})
+        payload = request_json.call_args.kwargs["payload"]
+        self.assertEqual(payload["max_completion_tokens"], 2048)
+        self.assertNotIn("max_tokens", payload)
+        self.assertNotIn("temperature", payload)
+
     def test_legacy_hungarian_glyphs_in_model_name_are_repaired(self):
         infos = {}
         canonical = llm_characters._merge_character(

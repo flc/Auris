@@ -3,6 +3,32 @@
 {% block content %}
 <div class="settings-page">
   <h1 class="settings-page-title">Settings</h1>
+  <div class="settings-layout">
+    <nav class="settings-nav" aria-label="Settings categories" role="tablist">
+      <button class="settings-nav-item active" type="button" role="tab"
+              aria-selected="true" aria-controls="settings-speech"
+              data-settings-target="speech" onclick="showSettingsCategory('speech')">
+        Speech engines
+      </button>
+      <button class="settings-nav-item" type="button" role="tab"
+              aria-selected="false" aria-controls="settings-characters"
+              data-settings-target="characters" onclick="showSettingsCategory('characters')">
+        Characters &amp; narrator
+      </button>
+      <button class="settings-nav-item" type="button" role="tab"
+              aria-selected="false" aria-controls="settings-output"
+              data-settings-target="output" onclick="showSettingsCategory('output')">
+        Generation &amp; export
+      </button>
+      <button class="settings-nav-item" type="button" role="tab"
+              aria-selected="false" aria-controls="settings-reading"
+              data-settings-target="reading" onclick="showSettingsCategory('reading')">
+        Reading interface
+      </button>
+    </nav>
+    <div class="settings-panels">
+      <div class="settings-category active" id="settings-speech"
+           data-settings-category="speech" role="tabpanel">
 
   <!-- Active engine -->
   <section class="settings-section">
@@ -181,22 +207,34 @@
     </div>
   </section>
 
+      </div>
+      <div class="settings-category" id="settings-characters"
+           data-settings-category="characters" role="tabpanel" hidden>
   <!-- Character detection -->
   <section class="settings-section">
     <div class="settings-section-title">Character &amp; Dialogue Speaker Detection</div>
     <p class="section-desc">
-      During book import Auris can ask a local language model who speaks each
-      dialogue unit. TTS is unloaded first, so the two models do not compete for VRAM.
+      During book import Auris can ask either a local language model or OpenAI
+      who speaks each dialogue unit. TTS is unloaded only for local analysis.
     </p>
     <div class="setting-row">
       <label>Detection mode</label>
       <select id="character-detection-mode" class="select-input"
               onchange="toggleCharacterDetection(this.value)">
-        <option value="llm">Local LLM — recommended</option>
+        <option value="llm">Language model — recommended</option>
         <option value="legacy">Legacy spaCy / regex</option>
       </select>
     </div>
     <div id="llm-character-settings" class="sub-panel">
+      <div class="setting-row">
+        <label>Language-model provider</label>
+        <select id="llm-provider" class="select-input"
+                onchange="toggleLLMProvider(this.value)">
+          <option value="local">Local server — LM Studio, Ollama, llama.cpp</option>
+          <option value="openai">OpenAI API</option>
+        </select>
+      </div>
+      <div id="local-llm-settings" class="provider-panel">
       <div class="setting-row">
         <label>OpenAI-compatible base URL</label>
         <input type="text" id="llm-base-url" class="text-input"
@@ -208,13 +246,43 @@
       </div>
       <div class="setting-row">
         <label>Model name</label>
-        <input type="text" id="llm-model" class="text-input"
-               placeholder="unsloth/gemma-4-26b-a4b-it">
+        <div class="input-group">
+          <select id="llm-model" class="select-input model-select">
+            <option value="">Load the available models…</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" type="button"
+                  onclick="loadLLMModels('local')">Load models</button>
+        </div>
       </div>
       <div class="setting-row">
         <label>API key <span class="muted">(optional)</span></label>
         <input type="password" id="llm-api-key" class="text-input"
                autocomplete="off" placeholder="Not needed for normal local servers">
+      </div>
+      </div>
+      <div id="openai-llm-settings" class="provider-panel hidden">
+        <div class="setting-row">
+          <label>OpenAI API key</label>
+          <input type="password" id="openai-api-key" class="text-input"
+                 autocomplete="off" placeholder="sk-…">
+          <span class="muted" style="font-size:.78rem">
+            Stored only in Auris's local settings file. A ChatGPT subscription
+            does not include API usage; OpenAI API billing is separate.
+          </span>
+        </div>
+        <div class="setting-row">
+          <label>OpenAI model</label>
+          <div class="input-group">
+            <select id="openai-model" class="select-input model-select">
+              <option value="">Load the models available to this API key…</option>
+            </select>
+            <button class="btn btn-ghost btn-sm" type="button"
+                    onclick="loadLLMModels('openai')">Load models</button>
+          </div>
+          <span class="muted" style="font-size:.78rem">
+            The list comes directly from your OpenAI account.
+          </span>
+        </div>
       </div>
       <div class="setting-row">
         <label>Request timeout (seconds)</label>
@@ -233,8 +301,8 @@
         <span id="llm-test-hint" class="status-hint"></span>
       </div>
       <div class="status-block">
-        LM Studio context length is configured in LM Studio itself. Auris sends
-        one chapter at a time and requests strict JSON speaker assignments.
+        Auris sends one chapter at a time and requests strict JSON speaker
+        assignments. Local context length is configured in the local server.
       </div>
     </div>
     <div id="legacy-character-settings" class="sub-panel hidden">
@@ -273,6 +341,9 @@
     </div>
   </section>
 
+      </div>
+      <div class="settings-category" id="settings-output"
+           data-settings-category="output" role="tabpanel" hidden>
   <!-- TTS text processing -->
   <section class="settings-section">
     <div class="settings-section-title">Speech Text Processing</div>
@@ -398,6 +469,9 @@
     </div>
   </section>
 
+      </div>
+      <div class="settings-category" id="settings-reading"
+           data-settings-category="reading" role="tabpanel" hidden>
   <!-- Reading Interface -->
   <section class="settings-section">
     <div class="settings-section-title">Reading Interface</div>
@@ -441,6 +515,9 @@
       </div>
     </div>
   </section>
+      </div>
+    </div>
+  </div>
 
   <div class="settings-footer">
     <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>

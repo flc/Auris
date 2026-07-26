@@ -25,8 +25,8 @@ Everything runs locally after setup. No API keys. No hosted TTS dependency.
 - Import EPUB, PDF, and TXT books.
 - Detect chapters, prologues, epilogues, forewords, appendices, and parts automatically.
 - Generate per-character voices with deterministic assignment.
-- Attribute dialogue to characters with a configurable local LM Studio, Ollama,
-  llama.cpp, or other OpenAI-compatible language-model endpoint.
+- Attribute dialogue to characters with OpenAI or a configurable local LM
+  Studio, Ollama, llama.cpp, or other OpenAI-compatible endpoint.
 - Customize each detected character in Voice Studio.
 - Customize the narrator voice per book.
 - Preview voices before saving.
@@ -109,11 +109,18 @@ attribution, and voice cloning requires the speaker's consent. Review the
 5. Export the current chapter or select chapters with `all`, a range such as
    `2-6`, or a comma-separated expression such as `1,3,7-10`.
 
-### Local LLM character detection
+### Language-model character detection
 
-In Settings, select **Local LLM** under Character & Dialogue Speaker Detection,
-then enter an OpenAI-compatible base URL and the exact served model name.
-Typical local URLs are:
+Open **Settings → Characters & narrator**, enable **Language model**, then choose
+either a local OpenAI-compatible server or the OpenAI API.
+
+For OpenAI, add an API key, use **Load models**, and select one of the text models
+available to the account. ChatGPT subscriptions and OpenAI API billing are
+separate; using this integration requires API access and is billed through the
+OpenAI API account.
+
+For a local server, enter its base URL and load the served models. Typical URLs
+are:
 
 - LM Studio: `http://127.0.0.1:1234/v1`
 - Ollama: `http://127.0.0.1:11434/v1`
@@ -134,16 +141,17 @@ the limiting factor.
 Recommended setup:
 
 1. Start the local server and load the language model.
-2. Open **Settings → Character & Dialogue Speaker Detection**.
-3. Select **Local LLM — recommended**.
-4. Enter the base URL and the exact model identifier exposed by the server.
+2. Open **Settings → Characters & narrator**.
+3. Select **Language model — recommended** and the **Local server** provider.
+4. Enter the base URL and use **Load models** to select the served model.
 5. Set the request timeout and maximum character count. Add an API key only if
    the local server requires one.
 6. Use **Test connection**, save the settings, and then import the book.
 
 Character and dialogue-speaker analysis is an import-time background job.
-Auris unloads the selected TTS engine before it starts so the TTS and language
-models do not compete for VRAM. It sends numbered text units chapter by chapter,
+For a local language model, Auris unloads the selected TTS engine first so the
+two models do not compete for VRAM. OpenAI analysis leaves local TTS running.
+Auris sends numbered text units chapter by chapter,
 builds a canonical character roster, and stores every dialogue-to-speaker
 assignment with the book. The reader, Voice Studio, playback, and export then
 reuse those stored assignments; the TTS engine is loaded lazily only when it is

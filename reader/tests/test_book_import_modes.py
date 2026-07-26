@@ -103,6 +103,32 @@ class BookImportModesTest(unittest.TestCase):
         self.assertEqual(book["single_narrator_mode"], 0)
         self.assertEqual(book["character_analysis_provider"], "llm")
 
+    def test_openai_character_analysis_does_not_unload_local_tts(self):
+        app_settings.save({
+            "llm_provider": "openai",
+            "openai_api_key": "test-key",
+            "openai_model": "gpt-test",
+        })
+        with (
+            patch.object(app_module.threading, "Thread") as thread,
+            patch.object(app_module.tts, "unload") as unload,
+        ):
+            response = self.client.post(
+                "/api/books/import",
+                data={
+                    "file": (self._book_file(), "openai.txt"),
+                    "narration_mode": "multi",
+                },
+                content_type="multipart/form-data",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        unload.assert_not_called()
+        thread.assert_called_once()
+        with database.get_conn() as conn:
+            book = conn.execute("SELECT * FROM books").fetchone()
+        self.assertEqual(book["character_analysis_model"], "gpt-test")
+
     def test_library_uses_pre_import_dialog(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)

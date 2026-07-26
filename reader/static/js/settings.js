@@ -2,6 +2,9 @@ let _settings = {};
 let _dlPollTimer = null;
 let _settingsReady = false;
 let _settingsDirty = false;
+const OPENAI_TEXT_MODEL_PREFIXES = [
+  'gpt-', 'o1', 'o3', 'o4', 'chatgpt-', 'chat-'
+];
 
 function setSettingsDirty(dirty) {
   _settingsDirty = dirty;
@@ -11,6 +14,35 @@ function setSettingsDirty(dirty) {
 
 function markSettingsDirty() {
   if (_settingsReady) setSettingsDirty(true);
+}
+
+function showSettingsCategory(category, updateHash = true) {
+  const target = document.querySelector(
+    `[data-settings-category="${category}"]`
+  );
+  if (!target) return;
+  document.querySelectorAll('[data-settings-category]').forEach(panel => {
+    const active = panel === target;
+    panel.classList.toggle('active', active);
+    panel.hidden = !active;
+  });
+  document.querySelectorAll('[data-settings-target]').forEach(button => {
+    const active = button.dataset.settingsTarget === category;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  if (updateHash) {
+    history.replaceState(null, '', `#${category}`);
+  }
+}
+
+function ensureModelOption(select, model) {
+  if (!select || !model) return;
+  if (![...select.options].some(option => option.value === model)) {
+    select.add(new Option(model, model));
+  }
+  select.value = model;
 }
 
 // ── Load ──────────────────────────────────────────────────────────────────────
@@ -60,14 +92,21 @@ async function loadSettings() {
 
   // Character / dialogue-speaker detection
   const detectionMode = _settings.character_detection_mode || 'legacy';
+  const llmProvider = _settings.llm_provider || 'local';
   document.getElementById('character-detection-mode').value = detectionMode;
+  document.getElementById('llm-provider').value = llmProvider;
   document.getElementById('llm-base-url').value =
     _settings.llm_base_url || 'http://127.0.0.1:1234/v1';
-  document.getElementById('llm-model').value = _settings.llm_model || '';
+  ensureModelOption(document.getElementById('llm-model'), _settings.llm_model || '');
   document.getElementById('llm-api-key').value = _settings.llm_api_key || '';
+  document.getElementById('openai-api-key').value = _settings.openai_api_key || '';
+  ensureModelOption(
+    document.getElementById('openai-model'), _settings.openai_model || ''
+  );
   document.getElementById('llm-timeout-sec').value = _settings.llm_timeout_sec ?? 600;
   document.getElementById('llm-max-characters').value = _settings.llm_max_characters ?? 60;
   toggleCharacterDetection(detectionMode);
+  toggleLLMProvider(llmProvider);
 
   // Narrator
   document.getElementById('narrator-instruct').value = _settings.narrator_instruct || '';
@@ -193,23 +232,98 @@ function toggleCharacterDetection(mode) {
     ?.classList.toggle('hidden', mode !== 'legacy');
 }
 
+function toggleLLMProvider(provider) {
+  document.getElementById('local-llm-settings')
+    ?.classList.toggle('hidden', provider !== 'local');
+  document.getElementById('openai-llm-settings')
+    ?.classList.toggle('hidden', provider !== 'openai');
+}
+
+function llmConnectionPayload(provider) {
+  if (provider === 'openai') {
+    return {
+      provider,
+      api_key: document.getElementById('openai-api-key').value,
+      model: document.getElementById('openai-model').value,
+    };
+  }
+  return {
+    provider: 'local',
+    base_url: document.getElementById('llm-base-url').value.trim(),
+    api_key: document.getElementById('llm-api-key').value,
+    model: document.getElementById('llm-model').value,
+  };
+}
+
+function isOpenAITextModel(model) {
+  const id = String(model || '').toLowerCase();
+  if (!OPENAI_TEXT_MODEL_PREFIXES.some(prefix => id.startsWith(prefix))) {
+    return false;
+  }
+  return ![
+    'audio', 'realtime', 'transcribe', 'tts', 'image', 'search-preview'
+  ].some(fragment => id.includes(fragment));
+}
+
+async function loadLLMModels(provider) {
+  const hint = document.getElementById('llm-test-hint');
+  const select = document.getElementById(
+    provider === 'openai' ? 'openai-model' : 'llm-model'
+  );
+  const previous = select.value;
+  hint.textContent = 'Loading models…';
+  hint.className = 'status-hint status-warn';
+  try {
+    const response = await fetch('/api/settings/llm-test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(llmConnectionPayload(provider)),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    let models = [...new Set(data.models)].sort((a, b) => a.localeCompare(b));
+    if (provider === 'openai') {
+      models = models.filter(isOpenAITextModel);
+    }
+    select.replaceChildren(new Option('Select a model…', ''));
+    models.forEach(model => select.add(new Option(model, model)));
+    if (previous && models.includes(previous)) {
+      select.value = previous;
+    } else if (provider === 'openai') {
+      const preferred = [
+        'gpt-5.6-luna', 'gpt-5.4-mini', 'gpt-5-mini', 'gpt-4.1-mini',
+        'gpt-4o-mini'
+      ].find(model => models.includes(model));
+      if (preferred) select.value = preferred;
+    }
+    markSettingsDirty();
+    hint.textContent = `Connected — ${models.length} compatible model(s) loaded.`;
+    hint.className = 'status-hint status-ok';
+  } catch (error) {
+    ensureModelOption(select, previous);
+    hint.textContent = `Connection failed: ${error.message}`;
+    hint.className = 'status-hint status-error';
+  }
+}
+
 async function testLLMConnection() {
   const hint = document.getElementById('llm-test-hint');
+  const provider = document.getElementById('llm-provider').value;
   hint.textContent = 'Connecting…';
   hint.className = 'status-hint status-warn';
   try {
     const r = await fetch('/api/settings/llm-test', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        base_url: document.getElementById('llm-base-url').value.trim(),
-        api_key: document.getElementById('llm-api-key').value,
-        model: document.getElementById('llm-model').value.trim(),
-      }),
+      body: JSON.stringify(llmConnectionPayload(provider)),
     });
     const d = await r.json();
     if (!r.ok || !d.ok) throw new Error(d.error || `HTTP ${r.status}`);
-    const selected = document.getElementById('llm-model').value.trim();
+    const selected = provider === 'openai'
+      ? document.getElementById('openai-model').value
+      : document.getElementById('llm-model').value;
     hint.textContent = d.selected_available
       ? `Connected — “${selected}” is available.`
       : `Connected — ${d.models.length} model(s), but the selected model was not listed.`;
@@ -463,9 +577,12 @@ async function saveSettings() {
     higgs_default_style: document.getElementById('higgs-default-style').value,
     higgs_default_expressive: document.getElementById('higgs-default-expressive').value,
     character_detection_mode: document.getElementById('character-detection-mode').value,
+    llm_provider:      document.getElementById('llm-provider').value,
     llm_base_url:      document.getElementById('llm-base-url').value.trim(),
-    llm_model:         document.getElementById('llm-model').value.trim(),
+    llm_model:         document.getElementById('llm-model').value,
     llm_api_key:       document.getElementById('llm-api-key').value,
+    openai_model:      document.getElementById('openai-model').value,
+    openai_api_key:    document.getElementById('openai-api-key').value,
     llm_timeout_sec:   parseInt(document.getElementById('llm-timeout-sec').value, 10) || 600,
     llm_max_characters: parseInt(document.getElementById('llm-max-characters').value, 10) || 60,
     narrator_instruct: document.getElementById('narrator-instruct').value.trim(),
@@ -517,4 +634,10 @@ function esc(s) {
 
 document.querySelector('.settings-page').addEventListener('input', markSettingsDirty);
 document.querySelector('.settings-page').addEventListener('change', markSettingsDirty);
+const initialSettingsCategory = location.hash.slice(1);
+showSettingsCategory(
+  document.querySelector(`[data-settings-category="${initialSettingsCategory}"]`)
+    ? initialSettingsCategory : 'speech',
+  false
+);
 loadSettings();

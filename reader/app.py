@@ -347,6 +347,25 @@ def voice_studio_page(book_id):
 # Book import
 # ════════════════════════════════════════════════════════════════════════════
 
+def _selected_llm_config(config: dict | None = None) -> dict:
+    """Resolve the active speaker-analysis provider without losing local settings."""
+    config = config or app_settings.load()
+    provider = str(config.get('llm_provider') or 'local').strip().lower()
+    if provider == 'openai':
+        return {
+            'provider': 'openai',
+            'base_url': 'https://api.openai.com/v1',
+            'api_key': str(config.get('openai_api_key') or ''),
+            'model': str(config.get('openai_model') or '').strip(),
+        }
+    return {
+        'provider': 'local',
+        'base_url': str(config.get('llm_base_url') or '').strip(),
+        'api_key': str(config.get('llm_api_key') or ''),
+        'model': str(config.get('llm_model') or '').strip(),
+    }
+
+
 @app.route('/api/books/import', methods=['POST'])
 def import_book():
     if 'file' not in request.files:
@@ -361,6 +380,7 @@ def import_book():
         return jsonify({'error': f'Unsupported format: {ext}'}), 400
 
     detection_config = app_settings.load()
+    llm_config = _selected_llm_config(detection_config)
     requested_mode = str(request.form.get('narration_mode') or '').strip().lower()
     if requested_mode == 'single':
         detection_mode = 'none'
@@ -368,13 +388,17 @@ def import_book():
     elif requested_mode == 'multi':
         detection_mode = 'llm'
         single_narrator_mode = False
-        if not str(detection_config.get('llm_base_url') or '').strip():
+        if not llm_config['base_url']:
             return jsonify({
                 'error': 'Configure a local language-model URL before using character voices.'
             }), 400
-        if not str(detection_config.get('llm_model') or '').strip():
+        if llm_config['provider'] == 'openai' and not llm_config['api_key']:
             return jsonify({
-                'error': 'Select a local language model before using character voices.'
+                'error': 'Add an OpenAI API key before using OpenAI character analysis.'
+            }), 400
+        if not llm_config['model']:
+            return jsonify({
+                'error': 'Select a language model before using character voices.'
             }), 400
     else:
         # Backwards compatibility for API clients that predate the import dialog.
@@ -416,7 +440,7 @@ def import_book():
              data.get('cover_b64'), data.get('language', 'en'),
              int(single_narrator_mode), len(chapters),
              analysis_status, detection_mode,
-             detection_config.get('llm_model', '') if detection_mode == 'llm'
+             llm_config['model'] if detection_mode == 'llm'
              else 'single narrator' if detection_mode == 'none'
              else 'spaCy/regex')
         )
@@ -430,9 +454,9 @@ def import_book():
                  ch['content'], ch['word_count'])
             )
 
-    # Import-time local LLM analysis owns the available GPU memory. Release TTS
-    # before the worker starts (and before it waits behind another queued book).
-    if detection_mode == 'llm':
+    # A local LLM owns the available GPU memory during analysis. Hosted OpenAI
+    # analysis does not need to interrupt local TTS playback.
+    if detection_mode == 'llm' and llm_config['provider'] == 'local':
         _character_analysis_reserve()
         tts.unload()
 
@@ -480,14 +504,19 @@ def _detect_characters(
             _set_character_analysis_status(book_id, 'failed', str(exc))
         return
 
+    llm_config = _selected_llm_config(config)
+    uses_local_llm = llm_config['provider'] == 'local'
     try:
         with _character_analysis_lock:
-            if not tts.wait_until_unloaded(timeout=600):
+            if uses_local_llm and not tts.wait_until_unloaded(timeout=600):
                 raise RuntimeError(
                     'Timed out waiting for the TTS model to release VRAM.'
                 )
             _set_character_analysis_status(
-                book_id, 'running', 'Connecting to the local language model…'
+                book_id,
+                'running',
+                'Connecting to the local language model…'
+                if uses_local_llm else 'Connecting to OpenAI…',
             )
             with get_conn() as conn:
                 rows = conn.execute(
@@ -508,14 +537,15 @@ def _detect_characters(
                 title=str(data.get('title') or ''),
                 author=str(data.get('author') or ''),
                 chapters=parsed_chapters,
-                base_url=config.get('llm_base_url', ''),
-                api_key=config.get('llm_api_key', ''),
-                model=config.get('llm_model', ''),
+                base_url=llm_config['base_url'],
+                api_key=llm_config['api_key'],
+                model=llm_config['model'],
                 timeout=float(config.get('llm_timeout_sec', 600)),
                 max_tokens=int(config.get('llm_max_output_tokens', 8192)),
                 max_characters=int(config.get('llm_max_characters', 60)),
                 batch_chars=int(config.get('llm_batch_chars', 10000)),
                 progress=progress,
+                provider=llm_config['provider'],
             )
             failed_batches = len(result.get('errors') or [])
             final_status = 'partial' if failed_batches else 'complete'
@@ -537,7 +567,8 @@ def _detect_characters(
         log.exception('LLM character analysis failed for book %s', book_id)
         _set_character_analysis_status(book_id, 'failed', str(exc))
     finally:
-        _character_analysis_release()
+        if uses_local_llm:
+            _character_analysis_release()
 
 
 def _character_analysis_reserve() -> None:
@@ -2317,7 +2348,9 @@ def save_settings():
         'normalize_text', 'tts_num_step', 'tts_batch_size', 'tts_coalesce_chars',
         'audio_mastering',
         'tts_accel', 'tts_export_workers',
-        'character_detection_mode', 'llm_base_url', 'llm_api_key', 'llm_model',
+        'character_detection_mode', 'llm_provider',
+        'llm_base_url', 'llm_api_key', 'llm_model',
+        'openai_api_key', 'openai_model',
         'llm_timeout_sec', 'llm_max_output_tokens', 'llm_max_characters',
         'llm_batch_chars',
     }
@@ -2336,10 +2369,17 @@ def save_settings():
         updates['character_detection_mode'] = (
             mode if mode in ('legacy', 'llm') else 'legacy'
         )
+    if 'llm_provider' in updates:
+        provider = str(updates['llm_provider'] or 'local').strip().lower()
+        updates['llm_provider'] = (
+            provider if provider in ('local', 'openai') else 'local'
+        )
     if 'llm_base_url' in updates:
         updates['llm_base_url'] = str(updates['llm_base_url'] or '').strip().rstrip('/')
     if 'llm_model' in updates:
         updates['llm_model'] = str(updates['llm_model'] or '').strip()
+    if 'openai_model' in updates:
+        updates['openai_model'] = str(updates['openai_model'] or '').strip()
     for key, default, low, high in (
         ('llm_timeout_sec', 600, 15, 3600),
         ('llm_max_output_tokens', 8192, 512, 32768),
@@ -2448,15 +2488,34 @@ def save_settings():
 @app.route('/api/settings/llm-test', methods=['POST'])
 def llm_test():
     body = request.get_json(force=True) or {}
-    base_url = str(body.get('base_url') or app_settings.get('llm_base_url', '')).strip()
-    api_key = str(body.get('api_key') or app_settings.get('llm_api_key', ''))
-    selected = str(body.get('model') or app_settings.get('llm_model', '')).strip()
+    provider = str(body.get('provider') or 'local').strip().lower()
+    if provider == 'openai':
+        base_url = 'https://api.openai.com/v1'
+        api_key = str(body.get('api_key') or app_settings.get('openai_api_key', ''))
+        selected = str(
+            body.get('model') or app_settings.get('openai_model', '')
+        ).strip()
+        if not api_key:
+            return jsonify({
+                'ok': False,
+                'error': 'OpenAI API key is required.',
+            }), 400
+    else:
+        provider = 'local'
+        base_url = str(
+            body.get('base_url') or app_settings.get('llm_base_url', '')
+        ).strip()
+        api_key = str(body.get('api_key') or app_settings.get('llm_api_key', ''))
+        selected = str(
+            body.get('model') or app_settings.get('llm_model', '')
+        ).strip()
     try:
         models = llm_characters.list_models(base_url, api_key=api_key)
     except Exception as exc:
         return jsonify({'ok': False, 'error': str(exc)}), 400
     return jsonify({
         'ok': True,
+        'provider': provider,
         'models': models,
         'selected_available': bool(selected and selected in models),
     })

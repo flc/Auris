@@ -1,8 +1,8 @@
 """LLM-backed literary character and dialogue-speaker analysis.
 
-The client intentionally uses only the Python standard library.  LM Studio,
-Ollama, llama.cpp and other local servers can all expose the OpenAI-compatible
-``/v1`` API without adding a hosted service or another runtime dependency.
+The client intentionally uses only the Python standard library. LM Studio,
+Ollama, llama.cpp and OpenAI all expose the endpoints used here without adding
+another runtime dependency.
 """
 
 from __future__ import annotations
@@ -244,16 +244,25 @@ def _chat(
     prompt: str,
     timeout: float,
     max_tokens: int,
+    provider: str = "local",
 ) -> dict:
+    hosted_openai = str(provider or "").strip().lower() == "openai"
     base_payload = {
         "model": model,
-        "temperature": 0,
-        "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
     }
+    if hosted_openai:
+        # Current OpenAI text models use max_completion_tokens. Temperature is
+        # omitted because reasoning models may reject it.
+        base_payload["max_completion_tokens"] = max_tokens
+    else:
+        # Local OpenAI-compatible servers most consistently support the older
+        # max_tokens spelling and temperature control.
+        base_payload["temperature"] = 0
+        base_payload["max_tokens"] = max_tokens
     schema_format = {
         "type": "json_schema",
         "json_schema": {
@@ -469,6 +478,7 @@ def analyze_book(
     max_characters: int = 60,
     batch_chars: int = 10_000,
     progress: Callable[[int, int, str], None] | None = None,
+    provider: str = "local",
 ) -> dict:
     """Analyze chapters sequentially and return characters plus annotations."""
     if not str(model or "").strip():
@@ -547,6 +557,7 @@ def analyze_book(
                 prompt=prompt,
                 timeout=timeout,
                 max_tokens=max_tokens,
+                provider=provider,
             )
         except LLMAnalysisError as exc:
             chapter_names = [
@@ -568,6 +579,7 @@ def analyze_book(
                     ),
                     timeout=timeout,
                     max_tokens=max_tokens,
+                    provider=provider,
                 )
             except LLMAnalysisError as retry_exc:
                 errors.append(
@@ -599,6 +611,7 @@ def analyze_book(
                     ),
                     timeout=timeout,
                     max_tokens=max_tokens,
+                    provider=provider,
                 )
                 if _valid_assignment_count(retry_parsed, candidates) > _valid_assignment_count(
                     parsed, candidates

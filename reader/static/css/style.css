@@ -1136,13 +1136,39 @@ code {
 .file-picker input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
 /* ── Settings page ──────────────────────────────────────────────────────────── */
-.settings-page { max-width: 720px; margin: 0 auto; padding: 36px 28px 100px; }
+.settings-page { max-width: 1040px; margin: 0 auto; padding: 36px 28px 100px; }
 
 .settings-page-title {
   font-family: var(--font-family); font-size: 1.5rem; font-weight: normal;
   color: var(--text); margin-bottom: 32px;
   border-bottom: 1px solid var(--border); padding-bottom: 20px;
 }
+
+.settings-layout {
+  display: grid; grid-template-columns: 210px minmax(0, 1fr);
+  gap: 24px; align-items: start;
+}
+.settings-nav {
+  position: sticky; top: 78px; display: flex; flex-direction: column;
+  gap: 5px; padding: 7px; background: var(--card);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.settings-nav-item {
+  appearance: none; width: 100%; padding: 10px 12px;
+  border: 0; border-radius: 5px; background: transparent;
+  color: var(--text2); font: 0.82rem/1.3 var(--ui-font);
+  text-align: left; cursor: pointer;
+}
+.settings-nav-item:hover { color: var(--text); background: var(--bg2); }
+.settings-nav-item.active {
+  color: var(--accent2); background: var(--accent-bg); font-weight: 600;
+}
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.settings-panels,
+.settings-category { min-width: 0; }
+.settings-category[hidden] { display: none; }
 
 .settings-section {
   background: var(--card); border: 1px solid var(--border);
@@ -1182,6 +1208,7 @@ code {
 
 .input-group { display: flex; gap: 8px; }
 .input-group .text-input { flex: 1; }
+.input-group .model-select { flex: 1; min-width: 0; }
 
 .radio-group { display: flex; gap: 20px; }
 .radio-group label {
@@ -1232,6 +1259,17 @@ code {
 
 @media (max-width: 520px) {
   .settings-unsaved-banner { bottom: 12px; gap: 10px; padding-left: 12px; }
+}
+
+@media (max-width: 760px) {
+  .settings-layout { display: block; }
+  .settings-nav {
+    position: static; flex-direction: row; overflow-x: auto;
+    margin-bottom: 16px; padding: 5px; scrollbar-width: thin;
+  }
+  .settings-nav-item {
+    width: auto; flex: 0 0 auto; white-space: nowrap; text-align: center;
+  }
 }
 
 /* Theme picker swatches */
