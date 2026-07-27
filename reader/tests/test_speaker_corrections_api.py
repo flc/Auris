@@ -81,6 +81,12 @@ class SpeakerCorrectionsApiTest(unittest.TestCase):
         bob = next(character for character in characters if character["name"] == "Bob")
         self.assertEqual(bob["frequency"], 1)
         self.assertTrue(bob["instruct"])
+        chapter_characters = self.client.get(
+            "/api/books/1/characters?chapter_id=2"
+        ).get_json()
+        self.assertIn("Bob", {
+            character["name"] for character in chapter_characters
+        })
 
         removed = self.client.put(
             "/api/books/1/chapters/2/speaker-annotations",
@@ -91,6 +97,14 @@ class SpeakerCorrectionsApiTest(unittest.TestCase):
         self.assertIsNone(segments[1]["character_name"])
         self.assertTrue(segments[1]["speaker_candidate"])
         self.assertEqual(segments[1]["speaker_source"], "manual")
+        chapter_characters = self.client.get(
+            "/api/books/1/characters?chapter_id=2"
+        ).get_json()
+        chapter_character_names = {
+            character["name"] for character in chapter_characters
+        }
+        self.assertNotIn("Bob", chapter_character_names)
+        self.assertIn("Alice", chapter_character_names)
 
     def test_manual_override_survives_automatic_reanalysis(self):
         self.client.put(

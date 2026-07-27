@@ -2,6 +2,7 @@ import io
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import app as app_module
 from core import database
@@ -23,6 +24,14 @@ class VoiceReferenceApiTest(unittest.TestCase):
             )
             conn.execute(
                 "INSERT INTO characters (id, book_id, name) VALUES (2, 1, 'Alice')"
+            )
+            conn.execute(
+                "INSERT INTO characters (id, book_id, name) VALUES (3, 1, 'Bob')"
+            )
+            conn.execute(
+                "INSERT INTO chapters "
+                "(id, book_id, title, order_num, content, word_count) "
+                "VALUES (4, 1, 'Opening', 0, 'Test chapter.', 2)"
             )
         app_module.app.config['TESTING'] = True
         self.client = app_module.app.test_client()
@@ -78,6 +87,38 @@ class VoiceReferenceApiTest(unittest.TestCase):
         self.assertIsNone(characters[0]['ref_audio_path'])
         self.assertIsNone(characters[0]['ref_audio_name'])
         self.assertIsNone(characters[0]['ref_text'])
+
+    def test_characters_can_be_filtered_to_current_chapter(self):
+        chapter_segments = [
+            {'character_name': None},
+            {'character_name': 'alice'},
+        ]
+        with patch.object(
+            app_module,
+            '_compute_segments_for_chapter',
+            return_value=chapter_segments,
+        ) as compute_segments:
+            response = self.client.get('/api/books/1/characters?chapter_id=4')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [character['name'] for character in response.get_json()],
+            ['Alice'],
+        )
+        compute_segments.assert_called_once_with(
+            1,
+            4,
+            single_narrator_mode=False,
+        )
+
+    def test_voice_studio_exposes_chapter_filter_for_requested_chapter(self):
+        response = self.client.get('/voice-studio/1?chapter_id=4')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'id="chapter-character-filter"', response.data)
+        self.assertIn(b'Only characters in this chapter', response.data)
+        self.assertIn(b'Opening', response.data)
+        self.assertIn(b'window.CURRENT_CHAPTER_ID = 4', response.data)
 
 
 if __name__ == '__main__':

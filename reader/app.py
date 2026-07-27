@@ -199,7 +199,11 @@ def _clear_book_tts_segments(book_id: int):
         conn.execute('DELETE FROM tts_segments WHERE book_id=?', (book_id,))
 
 
-def _compute_segments_for_chapter(book_id: int, chapter_id: int) -> list[dict]:
+def _compute_segments_for_chapter(
+    book_id: int,
+    chapter_id: int,
+    single_narrator_mode: bool | None = None,
+) -> list[dict]:
     with get_conn() as conn:
         ch = conn.execute(
             'SELECT * FROM chapters WHERE id=? AND book_id=?',
@@ -242,7 +246,11 @@ def _compute_segments_for_chapter(book_id: int, chapter_id: int) -> list[dict]:
         ch['content'],
         char_map,
         _book_narrator_instruct(dict(book) if book else None),
-        single_narrator_mode=_book_single_narrator_mode(dict(book) if book else None),
+        single_narrator_mode=(
+            _book_single_narrator_mode(dict(book) if book else None)
+            if single_narrator_mode is None
+            else single_narrator_mode
+        ),
         chapter_title=ch['title'],
         speaker_annotations=speaker_annotations,
     )
@@ -338,9 +346,36 @@ def voice_studio_page(book_id):
     book_data = dict(book)
     book_data['narrator_instruct'] = _book_narrator_instruct(book_data)
     book_data['single_narrator_mode'] = _book_single_narrator_mode(book_data)
+    try:
+        requested_chapter_id = int(request.args.get('chapter_id', ''))
+    except (TypeError, ValueError):
+        requested_chapter_id = None
+    with get_conn() as conn:
+        current_chapter = None
+        if requested_chapter_id is not None:
+            current_chapter = conn.execute(
+                'SELECT id, title FROM chapters WHERE id=? AND book_id=?',
+                (requested_chapter_id, book_id),
+            ).fetchone()
+        if current_chapter is None:
+            current_chapter = conn.execute(
+                'SELECT c.id, c.title FROM reading_progress rp '
+                'JOIN chapters c ON c.id=rp.chapter_id AND c.book_id=rp.book_id '
+                'WHERE rp.book_id=?',
+                (book_id,),
+            ).fetchone()
+        if current_chapter is None:
+            current_chapter = conn.execute(
+                'SELECT id, title FROM chapters WHERE book_id=? ORDER BY order_num LIMIT 1',
+                (book_id,),
+            ).fetchone()
     if not _character_analysis_is_active():
         tts.load_async()
-    return render_template('voice_studio.html', book=book_data)
+    return render_template(
+        'voice_studio.html',
+        book=book_data,
+        current_chapter=dict(current_chapter) if current_chapter else None,
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -990,12 +1025,39 @@ def get_progress(book_id):
 
 @app.route('/api/books/<int:book_id>/characters')
 def list_characters(book_id):
+    chapter_id = request.args.get('chapter_id', type=int)
+    chapter_character_names = None
+    if chapter_id is not None:
+        with get_conn() as conn:
+            chapter = conn.execute(
+                'SELECT id FROM chapters WHERE id=? AND book_id=?',
+                (chapter_id, book_id),
+            ).fetchone()
+        if not chapter:
+            return jsonify({'error': 'Chapter not found'}), 404
+        chapter_character_names = {
+            str(segment['character_name']).casefold()
+            for segment in _compute_segments_for_chapter(
+                book_id,
+                chapter_id,
+                single_narrator_mode=False,
+            )
+            if segment['character_name']
+        }
+
     with get_conn() as conn:
         rows = conn.execute(
             'SELECT * FROM characters WHERE book_id=? ORDER BY frequency DESC',
             (book_id,)
         ).fetchall()
-    return jsonify([dict(r) for r in rows])
+    characters = [dict(r) for r in rows]
+    if chapter_character_names is not None:
+        characters = [
+            character
+            for character in characters
+            if str(character['name']).casefold() in chapter_character_names
+        ]
+    return jsonify(characters)
 
 
 @app.route('/api/books/<int:book_id>/characters/<int:char_id>', methods=['PUT'])

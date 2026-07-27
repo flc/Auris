@@ -1,6 +1,10 @@
 const BOOK_ID = window.BOOK_ID;
 const NARRATOR_INSTRUCT = window.NARRATOR_INSTRUCT || "";
 const DEFAULT_NARRATOR_INSTRUCT = "male, elderly, low pitch, british accent";
+const CURRENT_CHAPTER_ID = window.CURRENT_CHAPTER_ID !== null
+  && Number.isInteger(Number(window.CURRENT_CHAPTER_ID))
+  ? Number(window.CURRENT_CHAPTER_ID)
+  : null;
 let singleNarratorMode = Boolean(window.SINGLE_NARRATOR_MODE);
 let narratorHasRefAudio = Boolean(window.NARRATOR_HAS_REF_AUDIO);
 let narratorRefAudioName = window.NARRATOR_REF_AUDIO_NAME || "Previously uploaded WAV";
@@ -149,16 +153,24 @@ function initNarratorControls() {
 }
 
 async function loadCharacters() {
-  const chars = await fetch(`/api/books/${BOOK_ID}/characters`).then((r) => r.json());
+  const chapterFilter = document.getElementById("chapter-character-filter");
+  const filterActive = Boolean(chapterFilter?.checked && CURRENT_CHAPTER_ID);
+  const query = filterActive ? `?chapter_id=${CURRENT_CHAPTER_ID}` : "";
+  const chars = await fetch(`/api/books/${BOOK_ID}/characters${query}`).then((r) => r.json());
   const list = document.getElementById("char-list");
-  document.getElementById("char-count").textContent = `(${chars.length} detected)`;
+  document.getElementById("char-count").textContent = filterActive
+    ? `(${chars.length} in chapter)`
+    : `(${chars.length} detected)`;
 
   if (!chars.length) {
     const analysis = await fetch(`/api/books/${BOOK_ID}/character-analysis`)
       .then((r) => r.json());
-    const message = analysis.message || "No characters were detected.";
+    const analysisActive = analysis.status === "queued" || analysis.status === "running";
+    const message = filterActive && !analysisActive
+      ? "No characters appear in this chapter."
+      : (analysis.message || "No characters were detected.");
     list.innerHTML = `<div class="muted" style="padding:16px">${esc(message)}</div>`;
-    if (analysis.status === "queued" || analysis.status === "running") {
+    if (analysisActive) {
       setTimeout(loadCharacters, 1500);
     }
     return;
@@ -398,6 +410,7 @@ async function previewNarrator() {
 document.querySelector('.preview-btn[data-char-id="narrator"]').onclick = previewNarrator;
 
 initNarratorControls();
+document.getElementById("chapter-character-filter")?.addEventListener("change", loadCharacters);
 loadCharacters();
 
 window.saveChar = saveChar;

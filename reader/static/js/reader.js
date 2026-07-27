@@ -249,6 +249,10 @@ async function openChapter(chapterId, options = {}) {
   segments = [];           // clear immediately so stale segments can't be played
   currentChapterId = chapterId;
   currentSegIdx    = 0;
+  const voiceStudioLink = document.getElementById('voice-studio-link');
+  if (voiceStudioLink) {
+    voiceStudioLink.href = `/voice-studio/${BOOK_ID}?chapter_id=${chapterId}`;
+  }
 
   document.querySelectorAll('.toc-item').forEach(el => {
     el.classList.toggle('active', +el.dataset.id === chapterId);

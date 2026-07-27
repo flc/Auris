@@ -93,6 +93,17 @@
     <div class="studio-section-title">
       Characters <span id="char-count" class="muted"></span>
     </div>
+    <label class="character-filter-row{% if not current_chapter %} disabled{% endif %}">
+      <input type="checkbox" id="chapter-character-filter"{% if not current_chapter %} disabled{% endif %}>
+      <span>
+        Only characters in this chapter
+        {% if current_chapter %}
+        <small>{{ current_chapter.title }}</small>
+        {% else %}
+        <small>No chapter is available</small>
+        {% endif %}
+      </span>
+    </label>
     <div id="character-voice-note" class="studio-note hidden"></div>
     <div id="char-list" class="char-list">
       <div class="loading-spinner">Detecting characters...</div>
@@ -108,5 +119,6 @@
 <script>window.SINGLE_NARRATOR_MODE = {{ 1 if book.single_narrator_mode else 0 }};</script>
 <script>window.NARRATOR_HAS_REF_AUDIO = {{ 1 if book.narrator_ref_audio_path else 0 }};</script>
 <script>window.NARRATOR_REF_AUDIO_NAME = {{ (book.narrator_ref_audio_name or '')|tojson }};</script>
+<script>window.CURRENT_CHAPTER_ID = {{ current_chapter.id if current_chapter else 'null' }};</script>
 <script src="/static/js/voice_studio.js"></script>
 {% endblock %}
