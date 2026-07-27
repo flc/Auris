@@ -314,8 +314,11 @@ function renderContent(segs) {
       seg.character_name &&
       previousSegment?.character_name === seg.character_name
     );
+    const isManualNarration = (
+      seg.speaker_source === 'manual' && !seg.character_name
+    );
     const showLabel = canEditSpeaker &&
-      (seg.speaker_candidate || seg.character_name) &&
+      (seg.speaker_candidate || seg.character_name || isManualNarration) &&
       (
         !seg.speaker_continuation ||
         !seg.character_name ||
@@ -328,14 +331,18 @@ function renderContent(segs) {
            type="button"
            title="${seg.character_name
              ? `${speakerRangeLength} ${speakerRangeLength === 1 ? 'sentence' : 'sentences'} assigned to ${esc(seg.character_name)}`
-             : 'Possible dialogue without an assigned speaker'} — hover to highlight, click to correct"
+             : isManualNarration
+               ? 'Marked as narration'
+               : 'Possible dialogue without an assigned speaker'} — hover to highlight, click to correct"
            onmouseenter="previewStoredSpeakerRange(${i})"
            onmouseleave="clearStoredSpeakerRangePreview()"
            onfocus="previewStoredSpeakerRange(${i})"
            onblur="clearStoredSpeakerRangePreview()"
            onclick="event.stopPropagation();openSpeakerEditor(${i})">
            <span aria-hidden="true">${seg.speaker_source === 'manual' ? '&#10003;' : '&#10022;'}</span>
-           ${esc(seg.character_name || 'Assign speaker')}
+           ${esc(seg.character_name || (
+             isManualNarration ? 'Narration / no speaker' : 'Assign speaker'
+           ))}
          </button>`
       : '';
     const inlineEditor = canEditSpeaker

@@ -319,6 +319,11 @@ class SpeakerCorrectionsApiTest(unittest.TestCase):
             "previousSegment?.character_name === seg.character_name",
             reader_script,
         )
+        self.assertIn("isManualNarration", reader_script)
+        self.assertIn(
+            "isManualNarration ? 'Narration / no speaker' : 'Assign speaker'",
+            reader_script,
+        )
         self.assertNotIn("speaker-editor-turn-scope", reader_script)
         self.assertIn(b"Who speaks this line?", response.data)
 
