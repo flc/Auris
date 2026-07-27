@@ -320,8 +320,13 @@ class SpeakerCorrectionsApiTest(unittest.TestCase):
             reader_script,
         )
         self.assertIn("isManualNarration", reader_script)
+        self.assertIn("startsNarrationRange", reader_script)
         self.assertIn(
-            "isManualNarration ? 'Narration / no speaker' : 'Assign speaker'",
+            "showNarrationLabel = isManualNarration || startsNarrationRange",
+            reader_script,
+        )
+        self.assertIn(
+            "showNarrationLabel ? 'Narration / no speaker' : 'Assign speaker'",
             reader_script,
         )
         self.assertNotIn("speaker-editor-turn-scope", reader_script)
