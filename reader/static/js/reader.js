@@ -309,9 +309,18 @@ function renderContent(segs) {
     ].filter(Boolean).join(' ');
     const canEditSpeaker = seg.unit_index !== null &&
       seg.unit_index !== undefined;
+    const previousSegment = i > 0 ? segs[i - 1] : null;
+    const continuesSameAssignedSpeaker = Boolean(
+      seg.character_name &&
+      previousSegment?.character_name === seg.character_name
+    );
     const showLabel = canEditSpeaker &&
       (seg.speaker_candidate || seg.character_name) &&
-      (!seg.speaker_continuation || !seg.character_name);
+      (
+        !seg.speaker_continuation ||
+        !seg.character_name ||
+        !continuesSameAssignedSpeaker
+      );
     const speakerRangeEnd = getStoredSpeakerRangeEnd(i, segs);
     const speakerRangeLength = speakerRangeEnd - i + 1;
     const speakerLabel = showLabel

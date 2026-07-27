@@ -314,6 +314,11 @@ class SpeakerCorrectionsApiTest(unittest.TestCase):
         self.assertIn("range_end_unit_index", reader_script)
         self.assertIn("previewStoredSpeakerRange", reader_script)
         self.assertIn("getStoredSpeakerRangeEnd", reader_script)
+        self.assertIn("continuesSameAssignedSpeaker", reader_script)
+        self.assertIn(
+            "previousSegment?.character_name === seg.character_name",
+            reader_script,
+        )
         self.assertNotIn("speaker-editor-turn-scope", reader_script)
         self.assertIn(b"Who speaks this line?", response.data)
 
