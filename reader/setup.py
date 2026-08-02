@@ -439,6 +439,50 @@ def install_higgs_transformers_runtime():
     ok("Higgs Transformers runtime installed (isolated from OmniVoice)")
 
 
+def install_f5_tts():
+    """Install F5-TTS' inference tree, skipping its training and cloud extras.
+
+    Its published dependency list pulls bitsandbytes, gradio and — through
+    cached_path — boto3 and google-cloud-storage. Auris resolves checkpoints
+    with huggingface_hub and never imports ``f5_tts.api``, so none of that is
+    needed. wandb and datasets are unavoidable: ``f5_tts.model.__init__``
+    imports its Trainer, which the inference helpers pull in transitively.
+
+    Unlike Higgs this needs no isolated runtime — F5-TTS leaves ``transformers``
+    unpinned and works with OmniVoice's 5.3.0.
+    """
+    step("Installing F5-TTS (Hungarian engine)")
+    pip_install("--no-deps", "f5-tts")
+    pip_install(
+        "matplotlib",
+        "vocos",
+        "x-transformers",
+        "torchdiffeq",
+        "ema-pytorch",
+        "rjieba",
+        "pypinyin",
+        "wandb",
+        "datasets",
+    )
+    ok("F5-TTS installed (inference dependencies only)")
+
+
+def install_piper():
+    """Install the Piper CPU engine.
+
+    It resolves to onnxruntime plus two tiny pure-Python packages — no torch,
+    no CUDA, and nothing that touches OmniVoice's pinned Transformers. espeak-ng
+    data ships inside the wheel, so no system package is needed either.
+
+    Note the licence: the current ``piper-tts`` release is GPL-3.0-or-later,
+    unlike the rest of the dependency set. The voices themselves come from CC0
+    datasets.
+    """
+    step("Installing Piper (fast CPU engine, GPL-3.0)")
+    pip_install("piper-tts")
+    ok("Piper installed")
+
+
 def install_reader_deps():
     step("Installing remaining dependencies from requirements.txt")
     # requirements.txt intentionally omits torch/torchaudio so this step cannot
@@ -535,6 +579,8 @@ def main():
     install_omnivoice_deps()
     install_omnivoice()
     install_higgs_transformers_runtime()
+    install_f5_tts()
+    install_piper()
     install_reader_deps()
     install_spacy_model()
     # Run last: any of the steps above can pull a different torch as a

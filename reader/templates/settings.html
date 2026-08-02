@@ -45,6 +45,9 @@
       <select id="tts-engine" class="select-input" onchange="toggleEngineSettings(this.value)">
         <option value="omnivoice">OmniVoice</option>
         <option value="higgs">Higgs TTS 3 — 4B</option>
+        <option value="f5">F5-TTS — Hungarian</option>
+        <option value="piper">Piper — fast CPU</option>
+        <option value="elevenlabs">ElevenLabs — cloud API</option>
       </select>
       <span class="muted" style="font-size:.78rem">
         Save, then use <strong>Reload TTS engine</strong>. Switching unloads the
@@ -139,6 +142,23 @@
     </div>
 
     <div class="setting-row">
+      <label>Quantization</label>
+      <select id="higgs-quantization" class="select-input">
+        <option value="none">None — BF16, ~8.7 GiB of weights</option>
+        <option value="8bit">8-bit — ~5.3 GiB total</option>
+        <option value="4bit">4-bit NF4 — ~3.6 GiB total (fastest on small cards)</option>
+      </select>
+      <span class="muted" style="font-size:.78rem">
+        The BF16 checkpoint is 4.65B parameters. If the weights do not fit in
+        VRAM, the driver pages them through system memory and every decoded
+        audio token waits on a PCIe transfer — that is the usual cause of very
+        slow Higgs generation. Quantization applies to the transformer body;
+        the fused audio embedding and head stay BF16. Needs
+        <code>bitsandbytes</code> and CUDA, and changes the generated audio, so
+        cached segments are re-rendered.
+      </span>
+    </div>
+    <div class="setting-row">
       <label>Temperature</label>
       <input type="number" id="higgs-temperature" class="text-input" min="0" max="2" step="0.05">
     </div>
@@ -207,10 +227,298 @@
         existing non-verbal tags to Higgs inline control tokens.
       </span>
     </div>
+    <div class="setting-row">
+      <span id="higgs-status" class="status-hint"></span>
+    </div>
     <div class="status-block">
       <strong>License:</strong> research/non-commercial, plus creator use for
       audiobooks and similar media with prominent Boson AI Higgs Audio attribution.
       Voice cloning requires the speaker's consent.
+    </div>
+  </section>
+
+  <!-- F5-TTS -->
+  <section class="settings-section engine-settings f5-settings hidden">
+    <div class="settings-section-title">F5-TTS — Hungarian</div>
+    <p class="section-desc">
+      A Hungarian finetune of F5-TTS v1 Base. It runs inside the main
+      environment — no isolated runtime — and needs about 4&nbsp;GB of VRAM.
+      F5-TTS has <strong>no voice design</strong>: it can only clone, so the
+      narrator reference below is required, and characters without their own
+      reference WAV share its voice.
+    </p>
+
+    <div class="setting-row">
+      <label>Model Source</label>
+      <div class="radio-group">
+        <label><input type="radio" name="f5_model_source" value="download" id="f5-src-download"> HuggingFace cache</label>
+        <label><input type="radio" name="f5_model_source" value="local" id="f5-src-local"> Local snapshot</label>
+      </div>
+    </div>
+
+    <div id="f5-panel-download" class="sub-panel">
+      <div class="setting-row">
+        <label>Model repository</label>
+        <input type="text" id="f5-model-repo" class="text-input"
+               value="Maxdorger29/f5-tts-hungarian">
+        <span class="muted" style="font-size:.78rem">
+          <code>Maxdorger29/f5-tts-hungarian</code> (280&nbsp;h) or
+          <code>sarpba/F5-TTS-Hun</code>. Each checkpoint ships its own
+          vocabulary — always change both fields together.
+        </span>
+      </div>
+    </div>
+
+    <div id="f5-panel-local" class="sub-panel hidden">
+      <div class="setting-row">
+        <label>Model directory</label>
+        <input type="text" id="f5-model-path" class="text-input" placeholder="/path/to/f5-tts-hungarian">
+        <span id="f5-path-status" class="status-hint"></span>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <label>Checkpoint file</label>
+      <input type="text" id="f5-model-file" class="text-input" value="model_last_final.safetensors">
+    </div>
+    <div class="setting-row">
+      <label>Vocabulary file</label>
+      <input type="text" id="f5-vocab-file" class="text-input" value="vocab.txt">
+    </div>
+
+    <div class="setting-row">
+      <label>Narrator reference WAV</label>
+      <input type="text" id="f5-ref-audio" class="text-input" placeholder="/path/to/narrator.wav">
+      <span class="muted" style="font-size:.78rem">
+        5–15 seconds of clean speech. Shorter clips clone unreliably.
+      </span>
+    </div>
+    <div class="setting-row">
+      <label>Reference transcript</label>
+      <input type="text" id="f5-ref-text" class="text-input"
+             placeholder="Exactly what is said in the WAV">
+      <span class="muted" style="font-size:.78rem">
+        Must transcribe the WAV word for word — a mismatch produces garbled
+        speech rather than a warning.
+      </span>
+    </div>
+
+    <div class="setting-row">
+      <label>NFE steps</label>
+      <input type="number" id="f5-nfe-step" class="text-input" min="8" max="64" step="1">
+      <span class="muted" style="font-size:.78rem">Quality against speed; 32 is the checkpoint's own default.</span>
+    </div>
+    <div class="setting-row">
+      <label>CFG strength</label>
+      <input type="number" id="f5-cfg-strength" class="text-input" min="0" max="6" step="0.1">
+    </div>
+    <div class="setting-row">
+      <label>Sway sampling</label>
+      <input type="number" id="f5-sway-sampling-coef" class="text-input" min="-2" max="2" step="0.1">
+    </div>
+    <div class="setting-row">
+      <label>Cross-fade (s)</label>
+      <input type="number" id="f5-cross-fade-sec" class="text-input" min="0" max="1" step="0.01">
+      <span class="muted" style="font-size:.78rem">Overlap between chunks of a long segment.</span>
+    </div>
+    <div class="setting-row">
+      <label>Seed</label>
+      <input type="number" id="f5-seed" class="text-input" min="-1" step="1">
+      <span class="muted" style="font-size:.78rem">-1 keeps sampling random.</span>
+    </div>
+    <div class="setting-row">
+      <label class="checkbox-label">
+        <input type="checkbox" id="f5-trim-onset">
+        Trim onset artifact — cut the warmup burst the DiT backbone emits
+        before the first phoneme
+      </label>
+    </div>
+
+    <div class="status-block">
+      <strong>License:</strong> the Hungarian checkpoints are CC-BY-NC-4.0 —
+      personal and research use with attribution, no commercial use.
+    </div>
+  </section>
+
+  <!-- Piper -->
+  <section class="settings-section engine-settings piper-settings hidden">
+    <div class="settings-section-title">Piper — fast CPU</div>
+    <p class="section-desc">
+      ONNX on the CPU: no VRAM, no model download beyond a few tens of
+      megabytes, and roughly <strong>40&times; faster than real time</strong> —
+      a full-length novel in about ten minutes. It cannot clone and has no
+      expression control, but each voice is its own model, so characters are
+      cast across the list below instead of all sounding like the narrator.
+    </p>
+
+    <div class="setting-row">
+      <label>Voice source</label>
+      <div class="radio-group">
+        <label><input type="radio" name="piper_voice_source" value="download" id="piper-src-download"> HuggingFace cache</label>
+        <label><input type="radio" name="piper_voice_source" value="local" id="piper-src-local"> Local directory</label>
+      </div>
+    </div>
+
+    <div id="piper-panel-download" class="sub-panel">
+      <div class="setting-row">
+        <label>Voice repository</label>
+        <input type="text" id="piper-voice-repo" class="text-input" value="rhasspy/piper-voices">
+        <span class="muted" style="font-size:.78rem">
+          Voices download on first use. Hungarian ships three:
+          <code>hu_HU-anna-medium</code>, <code>hu_HU-berta-medium</code> and
+          <code>hu_HU-imre-medium</code>.
+        </span>
+      </div>
+    </div>
+
+    <div id="piper-panel-local" class="sub-panel hidden">
+      <div class="setting-row">
+        <label>Voice directory</label>
+        <input type="text" id="piper-voice-dir" class="text-input" placeholder="/path/to/piper-voices">
+        <span class="muted" style="font-size:.78rem">
+          Must hold both <code>&lt;voice&gt;.onnx</code> and
+          <code>&lt;voice&gt;.onnx.json</code> for every voice named below.
+        </span>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <label>Narrator voice</label>
+      <input type="text" id="piper-narrator-voice" class="text-input" value="hu_HU-anna-medium">
+      <span class="muted" style="font-size:.78rem">
+        Reads all narration. Excluded from character casting so no character
+        shares its timbre.
+      </span>
+    </div>
+    <div class="setting-row">
+      <label>Character voices</label>
+      <input type="text" id="piper-character-voices" class="text-input"
+             value="hu_HU-berta-medium,hu_HU-imre-medium">
+      <span class="muted" style="font-size:.78rem">
+        Comma-separated. Characters are assigned deterministically by name, so
+        the same character keeps its voice across sessions.
+      </span>
+    </div>
+    <div class="setting-row">
+      <label class="checkbox-label">
+        <input type="checkbox" id="piper-match-gender">
+        Match gender — cast <code>male</code> / <code>female</code> characters
+        onto voices of the same gender when the description says one
+      </label>
+    </div>
+
+    <div class="setting-row">
+      <label>Length scale</label>
+      <input type="number" id="piper-length-scale" class="text-input" min="0.5" max="2" step="0.05">
+      <span class="muted" style="font-size:.78rem">Global duration trim on top of scene speed; above 1 is slower.</span>
+    </div>
+    <div class="setting-row">
+      <label>Noise scale</label>
+      <input type="number" id="piper-noise-scale" class="text-input" min="-1" max="2" step="0.05">
+      <span class="muted" style="font-size:.78rem">-1 keeps the value baked into the voice's own config.</span>
+    </div>
+    <div class="setting-row">
+      <label>Noise W scale</label>
+      <input type="number" id="piper-noise-w-scale" class="text-input" min="-1" max="2" step="0.05">
+      <span class="muted" style="font-size:.78rem">Phoneme duration variation; -1 keeps the voice default.</span>
+    </div>
+    <div class="setting-row">
+      <label class="checkbox-label">
+        <input type="checkbox" id="piper-normalize-audio">
+        Normalize output level
+      </label>
+    </div>
+
+    <div class="status-block">
+      <strong>License:</strong> the voices come from CC0 datasets, but the
+      <code>piper-tts</code> runtime installed by the setup script is
+      GPL-3.0-or-later — unlike the rest of the Auris dependency set.
+      Uploaded reference clips are ignored: Piper does not clone.
+    </div>
+  </section>
+
+  <!-- ElevenLabs -->
+  <section class="settings-section engine-settings elevenlabs-settings hidden">
+    <div class="settings-section-title">ElevenLabs — cloud API</div>
+    <p class="section-desc">
+      Synthesis runs on ElevenLabs' servers, so no model is loaded and no VRAM is
+      used. The whole book is read by the one voice configured here — narrator
+      instructions, per-character voices and reference clips are ignored by this
+      engine for now.
+    </p>
+    <div class="setting-row">
+      <label>API key</label>
+      <input type="password" id="elevenlabs-api-key" class="text-input"
+             placeholder="sk_…" autocomplete="off">
+      <span class="muted" style="font-size:.78rem">
+        Stored in <code>data/settings.json</code>. The
+        <code>ELEVENLABS_API_KEY</code> environment variable overrides it.
+      </span>
+    </div>
+    <div class="setting-row">
+      <label>Voice ID</label>
+      <input type="text" id="elevenlabs-voice-id" class="text-input"
+             placeholder="e.g. 21m00Tcm4TlvDq8ikWAM">
+      <span class="muted" style="font-size:.78rem">
+        Copy it from the ElevenLabs Voice Library or your own voices.
+      </span>
+    </div>
+    <div class="setting-row">
+      <label>Model</label>
+      <select id="elevenlabs-model-id" class="select-input">
+        <option value="eleven_multilingual_v2">Multilingual v2 — best quality</option>
+        <option value="eleven_turbo_v2_5">Turbo v2.5 — faster, cheaper</option>
+        <option value="eleven_flash_v2_5">Flash v2.5 — lowest latency</option>
+        <option value="eleven_v3">v3 — most expressive</option>
+      </select>
+    </div>
+    <div class="setting-row">
+      <label>Output format</label>
+      <select id="elevenlabs-output-format" class="select-input">
+        <option value="mp3_44100_128">MP3 44.1 kHz 128 kbps</option>
+        <option value="mp3_44100_192">MP3 44.1 kHz 192 kbps</option>
+        <option value="mp3_44100_64">MP3 44.1 kHz 64 kbps</option>
+        <option value="mp3_22050_32">MP3 22.05 kHz 32 kbps</option>
+        <option value="pcm_44100">PCM 44.1 kHz</option>
+        <option value="pcm_24000">PCM 24 kHz</option>
+        <option value="pcm_22050">PCM 22.05 kHz</option>
+        <option value="pcm_16000">PCM 16 kHz</option>
+      </select>
+      <span class="muted" style="font-size:.78rem">
+        Everything is decoded into the normal WAV cache. Higher bitrates and PCM
+        output may require a paid plan.
+      </span>
+    </div>
+    <div class="setting-row">
+      <label>Stability</label>
+      <input type="number" id="elevenlabs-stability" class="text-input" min="0" max="1" step="0.05">
+      <span class="muted" style="font-size:.78rem">Lower = more expressive, higher = more consistent.</span>
+    </div>
+    <div class="setting-row">
+      <label>Similarity boost</label>
+      <input type="number" id="elevenlabs-similarity" class="text-input" min="0" max="1" step="0.05">
+    </div>
+    <div class="setting-row">
+      <label>Style exaggeration</label>
+      <input type="number" id="elevenlabs-style" class="text-input" min="0" max="1" step="0.05">
+    </div>
+    <div class="setting-row">
+      <label class="checkbox-label">
+        <input type="checkbox" id="elevenlabs-speaker-boost">
+        Speaker boost — enhance similarity to the original voice
+      </label>
+    </div>
+    <div class="setting-row">
+      <label>Request timeout <span class="muted">(seconds)</span></label>
+      <input type="number" id="elevenlabs-timeout-sec" class="text-input" min="15" max="900" step="5">
+    </div>
+    <div class="setting-row">
+      <span id="elevenlabs-status" class="status-hint"></span>
+    </div>
+    <div class="status-block">
+      <strong>Cost:</strong> every segment that is not already in the audio cache
+      is billed per character. A full novel is several hundred thousand
+      characters — check your plan's quota before exporting one.
     </div>
   </section>
 
@@ -372,10 +680,13 @@
         <span>Lock the narrator to one voice</span>
       </label>
       <span class="muted" style="font-size:.78rem">
-        Without a reference clip both engines pick a new speaker for every segment, so the
-        narrator changes voice line by line. With this on, the instruct string is rendered
-        into one reference clip on first use and cloned for every segment afterwards.
-        Uploading narrator reference audio for a book always takes precedence.
+        Without a reference clip OmniVoice and Higgs pick a new speaker for every segment,
+        so the narrator changes voice line by line. With this on, the instruct string is
+        rendered into one reference clip on first use and cloned for every segment
+        afterwards. Uploading narrator reference audio for a book always takes precedence.
+        F5-TTS and ElevenLabs ignore this setting: the first clones from its mandatory
+        reference clip, the second addresses a fixed voice ID, so their voice is already
+        the same for every segment.
       </span>
     </div>
   </section>

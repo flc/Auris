@@ -1,9 +1,11 @@
-"""Runtime selector that keeps OmniVoice and Higgs model lifecycles separate."""
+"""Runtime selector that keeps each TTS engine's lifecycle separate."""
 
 from __future__ import annotations
 
 import threading
 import time
+
+ENGINE_NAMES = ("omnivoice", "higgs", "f5", "piper", "elevenlabs")
 
 
 def selected_engine_name() -> str:
@@ -13,7 +15,21 @@ def selected_engine_name() -> str:
         value = str(get("tts_engine", "omnivoice") or "omnivoice").lower()
     except Exception:
         value = "omnivoice"
-    return value if value in {"omnivoice", "higgs"} else "omnivoice"
+    return value if value in ENGINE_NAMES else "omnivoice"
+
+
+def engine_uses_voice_lock(name: str) -> bool:
+    """Whether ``name`` pins an instruction-only narrator to a rendered clip.
+
+    Engines that address a fixed voice — a cloud voice id, or F5's mandatory
+    reference clip — ignore the setting entirely, so nothing about their audio
+    changes when it is toggled.
+    """
+    try:
+        engine = TTSEngineRouter._engine_class(name)
+    except Exception:
+        return True
+    return bool(getattr(engine, "uses_voice_lock", True))
 
 
 class TTSEngineRouter:
@@ -22,16 +38,31 @@ class TTSEngineRouter:
         self._engine = self._create(selected_engine_name())
 
     @staticmethod
-    def _create(name: str):
+    def _engine_class(name: str):
+        """Resolve an engine class without loading a model."""
         if name == "higgs":
             from core.higgs_engine import HiggsTTSEngine
 
-            return HiggsTTSEngine()
+            return HiggsTTSEngine
+        if name == "f5":
+            from core.f5_engine import F5TTSEngine
+
+            return F5TTSEngine
+        if name == "piper":
+            from core.piper_engine import PiperTTSEngine
+
+            return PiperTTSEngine
+        if name == "elevenlabs":
+            from core.elevenlabs_engine import ElevenLabsTTSEngine
+
+            return ElevenLabsTTSEngine
         from core.tts_engine import TTSEngine
 
-        engine = TTSEngine()
-        engine.engine_name = "omnivoice"
-        return engine
+        return TTSEngine
+
+    @classmethod
+    def _create(cls, name: str):
+        return cls._engine_class(name)()
 
     @property
     def engine_name(self) -> str:

@@ -28,6 +28,51 @@ class ChapterSelectionTests(unittest.TestCase):
                     exporter.parse_chapter_selection(value, 6)
 
 
+class SegmentSelectionTests(unittest.TestCase):
+    def test_all_selects_every_segment(self):
+        for value in (None, '', '*', 'all', 'mind', 'összes'):
+            with self.subTest(value=value):
+                self.assertEqual(exporter.parse_segment_selection(value, 3), [1, 2, 3])
+
+    def test_numbers_ranges_and_duplicates_are_sorted(self):
+        self.assertEqual(
+            exporter.parse_segment_selection('9, 2, 4-6, 4', 12),
+            [2, 4, 5, 6, 9],
+        )
+
+    def test_invalid_selection_is_rejected(self):
+        for value in ('0', '1,,2', '6-2', '2,x', '13'):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    exporter.parse_segment_selection(value, 12)
+
+    def test_error_text_names_segments_not_chapters(self):
+        with self.assertRaises(ValueError) as caught:
+            exporter.parse_segment_selection('40', 12)
+        self.assertIn('Segment number out of range', str(caught.exception))
+
+    def test_empty_chapter_reports_segments(self):
+        with self.assertRaises(ValueError) as caught:
+            exporter.parse_segment_selection('all', 0)
+        self.assertIn('no segments', str(caught.exception))
+
+
+class SelectionFormattingTests(unittest.TestCase):
+    def test_consecutive_numbers_collapse_into_ranges(self):
+        self.assertEqual(exporter.format_selection([1, 2, 3, 7]), '1-3_7')
+
+    def test_scattered_numbers_stay_separate(self):
+        self.assertEqual(exporter.format_selection([4, 9, 11]), '4_9_11')
+
+    def test_single_number(self):
+        self.assertEqual(exporter.format_selection([5]), '5')
+
+    def test_result_survives_filename_sanitizing(self):
+        # _safe_name drops commas, so "1,3" would collapse to the number 13.
+        stem = exporter._safe_name(f'Chapter 1_seg_{exporter.format_selection([1, 3])}')
+        self.assertEqual(stem, 'Chapter_1_seg_1_3')
+
+
 class ChapterFolderExportTests(unittest.TestCase):
     def test_mastering_falls_back_to_unprocessed_wav_without_ffmpeg(self):
         with tempfile.TemporaryDirectory() as tmp:

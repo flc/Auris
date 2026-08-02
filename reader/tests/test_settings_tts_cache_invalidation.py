@@ -76,6 +76,35 @@ class SettingsTtsCacheInvalidationTest(unittest.TestCase):
         self.assertIs(response.get_json()['settings']['narrator_voice_lock'], False)
         self.assertEqual(self._segment_count(), 0)
 
+    def test_voice_lock_change_is_inert_on_an_engine_that_ignores_it(self):
+        """ElevenLabs addresses a fixed voice id — a re-render would just re-bill."""
+        settings.save({'tts_engine': 'elevenlabs'})
+
+        response = self.client.post('/api/settings', json={'narrator_voice_lock': False})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(response.get_json()['settings']['narrator_voice_lock'], False)
+        self.assertEqual(self._segment_count(), 1)
+
+    def test_voice_lock_change_is_inert_on_f5(self):
+        """F5 clones from a mandatory reference clip; there is no designed voice."""
+        settings.save({'tts_engine': 'f5'})
+
+        response = self.client.post('/api/settings', json={'narrator_voice_lock': True})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._segment_count(), 1)
+
+    def test_switching_to_an_engine_that_ignores_voice_lock_still_clears(self):
+        """The engine change itself is what invalidates, not the voice lock."""
+        response = self.client.post(
+            '/api/settings',
+            json={'tts_engine': 'elevenlabs', 'narrator_voice_lock': False},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._segment_count(), 0)
+
     def test_unchanged_pronunciation_keeps_persisted_playback_segments(self):
         response = self.client.post('/api/settings', json={'pronunciation_dict': ''})
 
@@ -110,6 +139,98 @@ class SettingsTtsCacheInvalidationTest(unittest.TestCase):
         self.assertFalse(
             settings.migrate_tts_segment_boundary_policy_version()
         )
+
+    def test_elevenlabs_voice_change_clears_persisted_playback_segments(self):
+        response = self.client.post(
+            '/api/settings', json={'elevenlabs_voice_id': ' voice-2 '}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()['settings']['elevenlabs_voice_id'], 'voice-2'
+        )
+        self.assertEqual(self._segment_count(), 0)
+
+    def test_piper_voice_change_clears_persisted_playback_segments(self):
+        """Recasting changes who speaks each line, so old takes are stale."""
+        response = self.client.post(
+            '/api/settings', json={'piper_narrator_voice': 'hu_HU-imre-medium'}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()['settings']['piper_narrator_voice'],
+            'hu_HU-imre-medium',
+        )
+        self.assertEqual(self._segment_count(), 0)
+
+    def test_piper_character_recast_clears_persisted_playback_segments(self):
+        response = self.client.post(
+            '/api/settings', json={'piper_match_gender': False}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._segment_count(), 0)
+
+    def test_malformed_piper_voice_name_falls_back_instead_of_saving(self):
+        """An invalid name would only surface as a 404 mid-chapter."""
+        response = self.client.post(
+            '/api/settings',
+            json={
+                'piper_narrator_voice': 'nonsense',
+                'piper_character_voices': 'hu_HU-imre-medium, bad name ,',
+            },
+        )
+
+        saved = response.get_json()['settings']
+        self.assertEqual(saved['piper_narrator_voice'], 'hu_HU-anna-medium')
+        self.assertEqual(saved['piper_character_voices'], 'hu_HU-imre-medium')
+
+    def test_f5_reference_change_clears_persisted_playback_segments(self):
+        response = self.client.post(
+            '/api/settings', json={'f5_ref_text': 'Egy másik referencia.'}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._segment_count(), 0)
+
+    def test_elevenlabs_api_key_change_keeps_persisted_playback_segments(self):
+        """Credentials do not change how a segment sounds."""
+        response = self.client.post('/api/settings', json={'elevenlabs_api_key': 'sk_new'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._segment_count(), 1)
+
+    def test_unsupported_elevenlabs_output_format_falls_back(self):
+        response = self.client.post(
+            '/api/settings', json={'elevenlabs_output_format': 'ulaw_8000'}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()['settings']['elevenlabs_output_format'],
+            'mp3_44100_128',
+        )
+
+    def test_elevenlabs_voice_settings_are_clamped(self):
+        response = self.client.post(
+            '/api/settings',
+            json={'elevenlabs_stability': 5, 'elevenlabs_style': -2},
+        )
+
+        saved = response.get_json()['settings']
+        self.assertEqual(saved['elevenlabs_stability'], 1.0)
+        self.assertEqual(saved['elevenlabs_style'], 0.0)
+
+    def test_unknown_engine_name_falls_back_to_omnivoice(self):
+        response = self.client.post('/api/settings', json={'tts_engine': 'elevenlabz'})
+
+        self.assertEqual(response.get_json()['settings']['tts_engine'], 'omnivoice')
+
+    def test_elevenlabs_engine_can_be_selected(self):
+        response = self.client.post('/api/settings', json={'tts_engine': 'ElevenLabs'})
+
+        self.assertEqual(response.get_json()['settings']['tts_engine'], 'elevenlabs')
 
     def test_settings_api_keeps_exact_line_boundaries_enabled(self):
         response = self.client.post(

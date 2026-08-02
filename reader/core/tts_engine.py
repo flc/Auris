@@ -611,6 +611,11 @@ def _prompt_cache_key(ref_audio: str, ref_text: str | None) -> str:
 
 
 class TTSEngine:
+    engine_name = "omnivoice"
+    # Voice design samples a new speaker on every call, so an instruction-only
+    # narrator has to be pinned to one rendered reference clip.
+    uses_voice_lock = True
+
     def __init__(self, model_path: str = "", worker_label: str = "primary"):
         self.model_path = model_path
         self.model = None
@@ -1608,7 +1613,11 @@ class TTSEngine:
         ref_text: str | None = None,
         language: str | None = None,
         normalize_text: bool | None = None,
+        speaker: str | None = None,
     ) -> dict:
+        # speaker is unused here: this engine derives the voice from instruct
+        # and the reference clip. Piper casts by speaker, so the parameter is
+        # part of the shared signature.
         return self.generate(
             text=sample_text,
             instruct=instruct,
@@ -1660,11 +1669,12 @@ class TTSExportPool:
 
     def start(self) -> int:
         """Load an optional second model. Auto mode uses two on 20GB+ CUDA."""
-        # The local Higgs Transformers adapter exposes whole-waveform,
-        # autoregressive generation and a 4B backbone. Keep one resident model;
-        # the OmniVoice-only replica path below must never be selected for it.
-        if getattr(self.primary, "engine_name", "omnivoice") != "omnivoice":
-            log.info("Parallel export replicas are disabled for Higgs TTS.")
+        # Replicas below are OmniVoice-specific: Higgs exposes whole-waveform
+        # autoregressive generation from a 4B backbone, and ElevenLabs has no
+        # local model at all. Neither may be routed through this path.
+        engine_name = getattr(self.primary, "engine_name", "omnivoice")
+        if engine_name != "omnivoice":
+            log.info("Parallel export replicas are disabled for the %s engine.", engine_name)
             return 1
         try:
             import torch

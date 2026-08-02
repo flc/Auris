@@ -14,6 +14,9 @@
         <a href="#voices">Hangok és klónozás</a>
         <a href="#omnivoice">OmniVoice</a>
         <a href="#higgs">Higgs TTS 3</a>
+        <a href="#f5">F5-TTS magyar</a>
+        <a href="#piper">Piper</a>
+        <a href="#elevenlabs">ElevenLabs</a>
         <a href="#engine-lifecycle">Motor és beállítások</a>
         <a href="#export">Export és gyorsítótár</a>
         <a href="#performance">Teljesítmény</a>
@@ -35,8 +38,9 @@
         <h1>Auris dokumentáció</h1>
         <p>
           Helyi könyvolvasás, többszereplős felolvasás és audiobook-export
-          OmniVoice vagy Higgs TTS 3 motorral. Ez az oldal a jelenleg
-          implementált Auris-funkciókat és a két motor eltéréseit írja le.
+          OmniVoice, Higgs TTS 3, magyar F5-TTS vagy Piper motorral, opcionálisan
+          ElevenLabs felhőhanggal. Ez az oldal a jelenleg implementált Auris-funkciókat és
+          a motorok eltéréseit írja le.
         </p>
       </div>
       <a class="docs-settings-link" href="/settings">Beállítások megnyitása <span aria-hidden="true">→</span></a>
@@ -64,6 +68,24 @@
           <h3>Erős magyar kiejtés és expresszív vezérlés</h3>
           <p>100+ nyelv, zero-shot hangklónozás, érzelem-, stílus-, prozódia-, szünet- és hangeffekt-tokenek.</p>
           <a href="#higgs">Higgs tudnivalók →</a>
+        </article>
+        <article>
+          <span class="result-label">F5-TTS — magyar</span>
+          <h3>Magyar finetune, kicsi VRAM-igény</h3>
+          <p>Kizárólag klónozás referenciahangból és betűpontos átiratból. Nincs voice design és nincs érzelemvezérlés, cserébe ~4 GB VRAM és nincs külön runtime.</p>
+          <a href="#f5">F5-TTS tudnivalók →</a>
+        </article>
+        <article>
+          <span class="result-label">Piper — gyors CPU</span>
+          <h3>Nincs VRAM, ~40× valós idő, több hang</h3>
+          <p>ONNX a processzoron. Nem klónoz és nincs érzelemvezérlés, viszont a karaktereket külön hangokra osztja, és egy egész regényt tíz perc alatt felolvas.</p>
+          <a href="#piper">Piper tudnivalók →</a>
+        </article>
+        <article>
+          <span class="result-label">ElevenLabs — felhő</span>
+          <h3>Nincs modellbetöltés, nincs VRAM-igény</h3>
+          <p>Opcionális felhőmotor API-kulccsal. Egyetlen kiválasztott hang olvassa a könyvet, karakterenkénti elszámolással.</p>
+          <a href="#elevenlabs">ElevenLabs tudnivalók →</a>
         </article>
       </div>
       <div class="docs-callout">
@@ -373,13 +395,14 @@
       </div>
       <div class="settings-guide-wrap">
         <table class="settings-guide">
-          <thead><tr><th>Lehetőség</th><th>OmniVoice</th><th>Higgs TTS 3</th></tr></thead>
+          <thead><tr><th>Lehetőség</th><th>OmniVoice</th><th>Higgs TTS 3</th><th>F5-TTS magyar</th><th>Piper</th></tr></thead>
           <tbody>
-            <tr><td><strong>Referenciahang + átirat</strong></td><td>Elsődleges, stabil voice clone mód.</td><td>Zero-shot voice clone; az átirat lényegesen javítja a hűséget. Az ideális kliphossz eltér az OmniVoice-tól: 5–30 mp.</td></tr>
-            <tr><td><strong>Üres referenciaszöveg</strong></td><td>Whisperrel automatikusan átírhatja, lassabb és pontatlanabb lehet.</td><td>Átirat nélkül is futhat, de a pontos szöveg erősen ajánlott.</td></tr>
-            <tr><td><strong>Voice instruct</strong></td><td>Nem, kor, hangmagasság és akcentus alapján hangot tervez.</td><td>A hangazonosságot főként a referencia adja; Expressive módban pitch/whisper tokenné alakul.</td></tr>
-            <tr><td><strong>Automatikus hang</strong></td><td>Referencia és instruct nélkül támogatott.</td><td>Referencia nélkül a modell saját hangkondicionálásával generál.</td></tr>
-            <tr><td><strong>Single narrator</strong></td><td colspan="2">Minden narrációt és párbeszédet ugyanazzal a narrátorhanggal olvas.</td></tr>
+            <tr><td><strong>Referenciahang + átirat</strong></td><td>Elsődleges, stabil voice clone mód.</td><td>Zero-shot voice clone; az átirat lényegesen javítja a hűséget. Az ideális kliphossz eltér az OmniVoice-tól: 5–30 mp.</td><td>Az egyetlen mód. Kötelező a referencia és a betűpontos átirat; ajánlott kliphossz 5–15 mp.</td><td>Nem klónoz. A feltöltött referenciaklipeket figyelmen kívül hagyja.</td></tr>
+            <tr><td><strong>Üres referenciaszöveg</strong></td><td>Whisperrel automatikusan átírhatja, lassabb és pontatlanabb lehet.</td><td>Átirat nélkül is futhat, de a pontos szöveg erősen ajánlott.</td><td>Nem támogatott: az Auris hibát jelez. Rossz átirat esetén a kimenet kásás lesz, nem hibás.</td><td>Nem értelmezhető.</td></tr>
+            <tr><td><strong>Voice instruct</strong></td><td>Nem, kor, hangmagasság és akcentus alapján hangot tervez.</td><td>A hangazonosságot főként a referencia adja; Expressive módban pitch/whisper tokenné alakul.</td><td>Nincs hatása. A leírás alapján megadott karakterhangok a narrátor referenciáját öröklik.</td><td>Csak a nemet olvassa ki belőle a szereposztáshoz; a hangot a modellfájl adja.</td></tr>
+            <tr><td><strong>Automatikus hang</strong></td><td>Referencia és instruct nélkül támogatott.</td><td>Referencia nélkül a modell saját hangkondicionálásával generál.</td><td>Nem támogatott; referencia nélkül nem indul a szintézis.</td><td>Mindig ez fut: a beállított hanglistából oszt.</td></tr>
+            <tr><td><strong>Külön karakterhangok</strong></td><td>Leírásból tervezett hang karakterenként.</td><td>Karakterenkénti referenciaklippel.</td><td>Csak saját referenciaklippel; e nélkül minden karakter a narrátor hangján szól.</td><td>Referencia nélkül is: minden karakter külön Piper-modellt kap a listából.</td></tr>
+            <tr><td><strong>Single narrator</strong></td><td colspan="4">Minden narrációt és párbeszédet ugyanazzal a narrátorhanggal olvas.</td></tr>
           </tbody>
         </table>
       </div>
@@ -502,6 +525,7 @@
         <table class="settings-guide">
           <thead><tr><th>Higgs beállítás</th><th>Alapérték</th><th>Hatás</th></tr></thead>
           <tbody>
+            <tr><td>Quantization</td><td><strong>None</strong></td><td>A BF16 modell 4,65 milliárd paraméter, a rezidens súlyok ~7,6 GiB. 8 GB-os kártyán ez épphogy befér, így minden más VRAM-fogyasztó lapozásba kényszeríti a drivert — ilyenkor minden dekódolt audio token egy PCIe-átvitelre vár. A 4 bites NF4 ~2,5 GiB-ra viszi le (mért érték RTX 5070 Laptopon), és a dekódolás ~3,3-szeresére gyorsul. <code>bitsandbytes</code> és CUDA kell hozzá; megváltoztatja a generált hangot, ezért a gyorsítótárazott szegmensek újra elkészülnek.</td></tr>
             <tr><td>Temperature</td><td><strong>0.8</strong></td><td>Mintavételi változatosság; magasabban szabadabb, kevésbé stabil lehet.</td></tr>
             <tr><td>Top P</td><td><strong>0.95</strong></td><td>Nucleus sampling valószínűségi tömege; 0 esetén kikapcsolható.</td></tr>
             <tr><td>Top K</td><td><strong>50</strong></td><td>A megtartott legvalószínűbb tokenek száma; 0 esetén kikapcsolható.</td></tr>
@@ -533,6 +557,26 @@
         </div>
       </div>
 
+      <div class="docs-callout">
+        <span class="docs-callout-icon" aria-hidden="true">≡</span>
+        <div>
+          <strong>A szegmensek egyesével készülnek — mérés alapján ez a gyorsabb.</strong>
+          <p>
+            A worker technikailag tud egyszerre több szegmenst dekódolni, és ez
+            alig kerül VRAM-ba, mert a szálak osztoznak a súlyokon és a
+            codecen. A mérés szerint viszont <strong>lassít</strong>: egyetlen
+            dekódolási folyam már kihasználja a GPU-t, a kvantált
+            mátrixszorzások nem hagynak kitöltetlen üresjáratot, a párhuzamos
+            ciklusok pedig a Python GIL-jéért versenyeznek. RTX 5070 Laptopon,
+            4 biten, lapozás nélkül (csúcs 4,7 / 7,96 GiB): 1 sáv
+            <strong>0,71×</strong> realtime, 2 sáv <strong>0,43×</strong>,
+            3 sáv <strong>0,31×</strong>. Ezért nincs rá kapcsoló a
+            beállításokban; kísérletezéshez a <code>data/settings.json</code>
+            <code>higgs_concurrency</code> mezője állítható. A rögzített seedű
+            szegmensek mindig egyedül futnak, hogy reprodukálhatók maradjanak.
+          </p>
+        </div>
+      </div>
       <div class="docs-callout">
         <span class="docs-callout-icon" aria-hidden="true">♪</span>
         <div>
@@ -594,9 +638,219 @@
       </p>
     </section>
 
-    <section class="docs-section" id="engine-lifecycle">
+    <section class="docs-section docs-engine-section" id="f5">
       <div class="docs-section-heading">
         <span class="docs-section-index">06</span>
+        <div>
+          <h2>F5-TTS — magyar</h2>
+          <p>
+            Az F5-TTS v1 Base magyar finetune-ja: flow matching alapú DiT
+            architektúra, vocos vokóderrel, 24 kHz kimenettel. Kizárólag
+            klónozni tud, viszont kicsi és gyors — nagyjából 4 GB VRAM-ból fut,
+            és RTX 3090-en a valós idő ~2,5-szeresével szintetizál.
+          </p>
+        </div>
+      </div>
+
+      <div class="docs-two-column">
+        <div>
+          <h3>Amit tudni kell előre</h3>
+          <ul class="docs-check-list">
+            <li><strong>Nincs voice design.</strong> Kötelező a narrátor referenciahangja és a hozzá tartozó betűpontos átirat.</li>
+            <li>Rossz átirat esetén nem hibaüzenet jön, hanem kásás beszéd — ezt érdemes preview-val ellenőrizni.</li>
+            <li>Saját referencia nélküli karakterek a narrátor hangját öröklik; a leírás alapú megkülönböztetés itt nem működik.</li>
+            <li>Nincsenek érzelemtokenek: az Auris kifejezés-tagjeit eltávolítja, a jelenetsebesség és az írásjelek maradnak.</li>
+            <li>Ajánlott referenciahossz 5–15 mp, tiszta, egyszereplős felvétel.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Auris-integráció</h3>
+          <ul class="docs-check-list">
+            <li>A fő környezetben fut: az F5-TTS nem rögzíti a Transformers verzióját, így nincs külön runtime és nincs worker processz.</li>
+            <li>A checkpointot és a szótárat a HuggingFace gyorsítótárba tölti le, vagy helyi könyvtárból olvassa.</li>
+            <li>A Stop a következő mondat előtt áll meg — a futó mondat mindig végigfut, mert az ODE-megoldó nem megszakítható.</li>
+            <li>A DiT bemelegedési zaját energiaalapú vágás távolítja el a hang elejéről.</li>
+            <li>A referenciaszöveg a mentett Voice Studio rekordból automatikusan továbbadódik.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="docs-callout">
+        <span class="docs-callout-icon" aria-hidden="true">!</span>
+        <div>
+          <strong>A szótár 67 karakteres és csupa kisbetűs.</strong>
+          <p>
+            Az F5-TTS minden ismeretlen karaktert szóközzé alakít, tehát egy
+            nagybetű vagy zárójel némán kitörölne betűket a szavakból. Az Auris
+            ezért a szintézis előtt a szótárra hajtja a szöveget: kisbetűsít,
+            kiírja a szimbólumokat (<code>%</code> → <code>százalék</code>),
+            javítja a régi PDF-ek <code>õ→ő</code> és <code>û→ű</code> hibáit,
+            és az egymásra torlódó írásjelekből a legerősebbet tartja meg.
+          </p>
+        </div>
+      </div>
+
+      <div class="settings-guide-wrap" style="margin-top:28px">
+        <table class="settings-guide">
+          <thead><tr><th>F5 beállítás</th><th>Alapérték</th><th>Hatás</th></tr></thead>
+          <tbody>
+            <tr><td>Model repository</td><td><strong>Maxdorger29/f5-tts-hungarian</strong></td><td>280 óra magyar anyag. Alternatíva: <code>sarpba/F5-TTS-Hun</code>.</td></tr>
+            <tr><td>Vocabulary file</td><td><strong>vocab.txt</strong></td><td>Checkpointonként eltér — mindig a checkpointtal együtt cseréld, különben néma hibát ad.</td></tr>
+            <tr><td>NFE steps</td><td><strong>32</strong></td><td>Minőség és sebesség aránya; a modellkártya saját alapértéke.</td></tr>
+            <tr><td>CFG strength</td><td><strong>2.0</strong></td><td>Mennyire ragaszkodik a szöveghez és a referenciához.</td></tr>
+            <tr><td>Sway sampling</td><td><strong>-1.0</strong></td><td>Az ODE lépések eloszlása; a negatív érték a korai lépéseket sűríti.</td></tr>
+            <tr><td>Cross-fade</td><td><strong>0.15 mp</strong></td><td>Átúsztatás hosszú szegmens darabjai között.</td></tr>
+            <tr><td>Seed</td><td><strong>-1</strong></td><td>-1 véletlen; rögzített egész szám ismételhető A/B összehasonlításhoz.</td></tr>
+            <tr><td>Trim onset artifact</td><td><strong>bekapcsolva</strong></td><td>Levágja a bemelegedési zajt az első fonéma előtt.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="docs-footnote" style="margin-top:14px">
+        A magyar checkpointok licence CC-BY-NC-4.0: személyes és kutatási
+        használat forrásmegjelöléssel, kereskedelmi felhasználás nélkül.
+        Modellkártya:
+        <a href="https://huggingface.co/Maxdorger29/f5-tts-hungarian" target="_blank" rel="noopener">Maxdorger29/f5-tts-hungarian</a>.
+      </p>
+    </section>
+
+    <section class="docs-section docs-section-tinted docs-engine-section" id="piper">
+      <div class="docs-section-heading">
+        <span class="docs-section-index">07</span>
+        <div>
+          <h2>Piper — gyors CPU</h2>
+          <p>
+            ONNX modellek a processzoron: nincs VRAM-igény, nincs torch, és a
+            szintézis nagyjából <strong>40-szer gyorsabb a valós időnél</strong>
+            — egy 400 ezer karakteres regény körülbelül tíz perc. Egy hang
+            néhány tíz megabájt, és első használatkor töltődik le.
+          </p>
+        </div>
+      </div>
+
+      <div class="docs-two-column">
+        <div>
+          <h3>Amit tud</h3>
+          <ul class="docs-check-list">
+            <li>Három magyar hang: <strong>anna</strong>, <strong>berta</strong> (női) és <strong>imre</strong> (férfi).</li>
+            <li><strong>Karakterenként külön hang</strong> referenciaklip nélkül — ezt egyik másik helyi motor sem tudja ilyen olcsón.</li>
+            <li>A narrátor a beállított hangot kapja, és ki van zárva a karakter-szereposztásból, így egyetlen karakter sem szól a hangján.</li>
+            <li>A karakterek a <em>nevük</em> alapján kapnak hangot, tehát a szereposztás munkamenetek és újraexportok között is állandó.</li>
+            <li>A <strong>Nem egyeztetése</strong> opcióval a <code>male</code> / <code>female</code> leírású karakterek azonos nemű hangra kerülnek.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Amit nem tud</h3>
+          <ul class="docs-check-list">
+            <li>Nem klónoz: a feltöltött referenciaklipeket figyelmen kívül hagyja.</li>
+            <li>Nincs érzelem-, stílus- vagy prozódiavezérlés; csak a jelenetsebesség és az írásjelek hatnak.</li>
+            <li>A hangkészlet kötött — annyi különböző karakterhang lehetséges, ahány modellt beállítasz.</li>
+            <li>A minőség jó, de nem éri el a Higgs vagy a magyar F5 természetességét.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="docs-callout">
+        <span class="docs-callout-icon" aria-hidden="true">!</span>
+        <div>
+          <strong>Az espeak-ng mindent kimond, amit kap.</strong>
+          <p>
+            Egy bennmaradt Auris-tag nem eltűnik, hanem felolvasásra kerül:
+            a <code>[laughter]</code> „lˈɑuɡhtɛr” lenne. Az Auris ezért a
+            szintézis előtt eltávolítja a kifejezés-tageket, és javítja a régi
+            PDF-ek <code>õ→ő</code>, <code>û→ű</code> karakterhibáit. A Piper
+            modellek 22,05 kHz-en szólnak, az Auris pedig 24 kHz-re konvertál,
+            mert a fejezetexport ezt feltételezi.
+          </p>
+        </div>
+      </div>
+
+      <div class="settings-guide-wrap" style="margin-top:28px">
+        <table class="settings-guide">
+          <thead><tr><th>Piper beállítás</th><th>Alapérték</th><th>Hatás</th></tr></thead>
+          <tbody>
+            <tr><td>Narrator voice</td><td><strong>hu_HU-anna-medium</strong></td><td>A narrációt olvassa; a karakter-szereposztásból ki van zárva.</td></tr>
+            <tr><td>Character voices</td><td><strong>hu_HU-berta-medium, hu_HU-imre-medium</strong></td><td>Vesszővel elválasztott lista, ebből kapnak a karakterek.</td></tr>
+            <tr><td>Match gender</td><td><strong>bekapcsolva</strong></td><td>A leírásban szereplő nemhez azonos nemű hangot választ.</td></tr>
+            <tr><td>Length scale</td><td><strong>1.0</strong></td><td>Globális hosszszorzó a jelenetsebesség fölött; 1 fölött lassabb.</td></tr>
+            <tr><td>Noise scale</td><td><strong>-1</strong></td><td>-1 esetén a hang saját konfigurációja dönt.</td></tr>
+            <tr><td>Noise W scale</td><td><strong>-1</strong></td><td>Fonémahossz-változatosság; -1 esetén a modell alapértéke.</td></tr>
+            <tr><td>Normalize output level</td><td><strong>bekapcsolva</strong></td><td>Kimeneti szint normalizálása.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="docs-footnote" style="margin-top:14px">
+        A hangok CC0 adathalmazokból készültek, a telepített
+        <code>piper-tts</code> futtatókörnyezet viszont GPL-3.0-or-later — a
+        többi Auris-függőséggel ellentétben. Hangkészlet:
+        <a href="https://huggingface.co/rhasspy/piper-voices" target="_blank" rel="noopener">rhasspy/piper-voices</a>.
+      </p>
+    </section>
+
+    <section class="docs-section docs-engine-section" id="elevenlabs">
+      <div class="docs-section-heading">
+        <span class="docs-section-index">08</span>
+        <div>
+          <h2>ElevenLabs — felhő API</h2>
+          <p>
+            Opcionális felhőmotor. Nem tölt be modellt és nem használ VRAM-ot;
+            minden még nem gyorsítótárazott szegmens egy HTTP-kérés, amit a
+            szolgáltató karakterenként számláz.
+          </p>
+        </div>
+      </div>
+      <div class="docs-two-column">
+        <div>
+          <h3>Beállítás</h3>
+          <ol class="docs-number-list">
+            <li>Illeszd be az <strong>API key</strong> mezőbe a kulcsot, vagy add meg az <code>ELEVENLABS_API_KEY</code> környezeti változót — az utóbbi erősebb.</li>
+            <li>Másold be a <strong>Voice ID</strong> mezőbe a kívánt hang azonosítóját a Voice Library-ból.</li>
+            <li>Válaszd ki a modellt és a kimeneti formátumot, majd ments.</li>
+            <li>Nyomd meg a <strong>Reload TTS engine</strong> gombot; a kvóta a mentés alatt jelenik meg.</li>
+          </ol>
+        </div>
+        <div>
+          <h3>Jelenlegi korlátok</h3>
+          <ul class="docs-check-list">
+            <li>Egyetlen hang olvassa az egész könyvet.</li>
+            <li>A narrátorleírás, a karakterhangok és a referenciaklipek nem jutnak el a szolgáltatóhoz.</li>
+            <li>A szegmensek egyesével, soros kérésekkel készülnek.</li>
+            <li>Az Auris nem verbális tagjei (<code>[laughter]</code>, <code>[sigh]</code>) törlődnek, nem fordulnak át v3 audio tagekre.</li>
+            <li>A sebességet a szolgáltató 0,7–1,2 közé korlátozza; a jelenet-tempó ehhez igazodik.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="settings-guide-wrap" style="margin-top:28px">
+        <table class="settings-guide">
+          <thead><tr><th>ElevenLabs beállítás</th><th>Alapérték</th><th>Hatás</th></tr></thead>
+          <tbody>
+            <tr><td>Model</td><td><strong>eleven_multilingual_v2</strong></td><td>Minőség/ár/latencia kompromisszum. A turbo és flash változatok kapják meg a könyv nyelvkódját is.</td></tr>
+            <tr><td>Output format</td><td><strong>mp3_44100_128</strong></td><td>Az Auris minden formátumot WAV-ba dekódol a szokásos cache-be. A magasabb bitráta és a PCM fizetős csomagot igényelhet.</td></tr>
+            <tr><td>Stability</td><td><strong>0.5</strong></td><td>Alacsonyabb érték expresszívebb, magasabb egyenletesebb felolvasás.</td></tr>
+            <tr><td>Similarity boost</td><td><strong>0.75</strong></td><td>Mennyire ragaszkodjon az eredeti hangkarakterhez.</td></tr>
+            <tr><td>Style exaggeration</td><td><strong>0.0</strong></td><td>Stílusjegyek felerősítése; növeli a generálási időt.</td></tr>
+            <tr><td>Request timeout</td><td><strong>120 s</strong></td><td>Egy kérés felső időkorlátja. A 429-es és 5xx válaszokat az Auris négyszer újrapróbálja növekvő várakozással.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="docs-callout">
+        <span class="docs-callout-icon" aria-hidden="true">!</span>
+        <div>
+          <strong>Egy regény több százezer karakter.</strong>
+          <p>
+            A már legenerált fejezetek újralejátszása és újraexportálása ingyenes,
+            mert a WAV cache-ből jönnek — de az első generálás a teljes szöveget
+            elküldi. Export előtt ellenőrizd a csomagod kvótáját, amit az
+            ElevenLabs beállításblokk mutat a motor újratöltése után.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="docs-section" id="engine-lifecycle">
+      <div class="docs-section-heading">
+        <span class="docs-section-index">09</span>
         <div>
           <h2>Motorválasztás, betöltés és beállítások</h2>
           <p>A Settings oldalon a közös és a motorspecifikus opciók külön blokkokban jelennek meg.</p>
@@ -606,7 +860,7 @@
         <div>
           <h3>Motorváltás</h3>
           <ol class="docs-number-list">
-            <li>Válaszd ki az <strong>Active engine</strong> mezőben az OmniVoice vagy Higgs motort.</li>
+            <li>Válaszd ki az <strong>Active engine</strong> mezőben az OmniVoice, Higgs, F5-TTS, Piper vagy ElevenLabs motort.</li>
             <li>Mentsd a beállításokat.</li>
             <li>Nyomd meg a <strong>Reload TTS engine</strong> gombot.</li>
             <li>Várd meg a jobb felső állapotjelző <strong>ready</strong> állapotát.</li>
@@ -639,7 +893,7 @@
 
     <section class="docs-section docs-section-tinted" id="export">
       <div class="docs-section-heading">
-        <span class="docs-section-index">07</span>
+        <span class="docs-section-index">10</span>
         <div>
           <h2>Export, felirat és audio cache</h2>
           <p>A lejátszás és az export ugyanazt a hangroutingot, referenciát és referenciaszöveget használja.</p>
@@ -677,7 +931,7 @@
 
     <section class="docs-section" id="performance">
       <div class="docs-section-heading">
-        <span class="docs-section-index">08</span>
+        <span class="docs-section-index">11</span>
         <div>
           <h2>Teljesítmény és GPU-mérés</h2>
           <p>
@@ -737,7 +991,7 @@
 
     <section class="docs-section" id="troubleshooting">
       <div class="docs-section-heading">
-        <span class="docs-section-index">09</span>
+        <span class="docs-section-index">12</span>
         <div>
           <h2>Hibaelhárítás</h2>
           <p>A leggyakoribb közös és motorspecifikus jelenségek.</p>
@@ -759,6 +1013,18 @@
         <details>
           <summary>A Stop után még fut a generálás</summary>
           <div><p>A jelenlegi Auris megszakítja a böngészős kéréseket és a backend generálást is. Higgs esetén leállítja az izolált worker processzt, majd újratölti a modellt. Régi szerverfolyamat esetén indítsd újra a <code>run.bat</code>-ot és frissíts <code>Ctrl+F5</code>-tel.</p></div>
+        </details>
+        <details>
+          <summary>A Higgs generálás borzasztó lassú</summary>
+          <div><p>Nézd meg a Higgs beállításblokk alján az állapotsort: kiírja a tényleges eszközt, a pontosságot és a lefoglalt/összes VRAM-ot. Ha a lefoglalt érték a teljes VRAM közelében van, a driver rendszermemóriába lapozza a súlyokat, és minden dekódolt audio token PCIe-átvitelre vár. Ilyenkor állítsd a <strong>Quantization</strong> mezőt <strong>4-bit</strong> értékre, ments, majd nyomj <strong>Reload TTS engine</strong>-t. Ezen felül a modell természeténél fogva tokenenként egy teljes forward-passt futtat, tehát valós idő körüli sebességnél gyorsabb nem lesz.</p></div>
+        </details>
+        <details>
+          <summary>ElevenLabs motornál „Model not ready” marad az állapot</summary>
+          <div><p>Az állapotüzenet megmondja, mi hiányzik: API-kulcs vagy Voice ID. Hibás kulcs esetén az Auris egyszer jelez, és nem próbálkozik újra minden lekérdezésnél — javítsd a kulcsot, ments, majd nyomj <strong>Reload TTS engine</strong>-t.</p></div>
+        </details>
+        <details>
+          <summary>Minden szereplő ugyanazzal a hanggal szólal meg ElevenLabsnál</summary>
+          <div><p>Ez a jelenlegi működés: a felhőmotor egyetlen beállított hangot használ. A karakterenkénti hangokhoz ElevenLabs voice ID-k hozzárendelése kell, ami még nincs implementálva. Többszereplős felolvasáshoz válts OmniVoice, Higgs vagy Piper motorra.</p></div>
         </details>
         <details>
           <summary>OmniVoice exportnál csak egy worker indul</summary>

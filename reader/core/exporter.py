@@ -482,40 +482,82 @@ def export_chapter_folder(
     return {'directory_path': output_dir, 'chapters': files}
 
 
-def parse_chapter_selection(selection: str | None, chapter_count: int) -> list[int]:
-    """Parse print-style chapter numbers such as ``1,3,5-8``."""
-    if chapter_count < 1:
-        raise ValueError('This book has no chapters to export.')
+SELECT_ALL_WORDS = ('', '*', 'all', 'mind', 'összes')
+
+
+def _parse_number_selection(
+    selection: str | None, count: int, noun: str, nothing_message: str
+) -> list[int]:
+    """Parse a print-style 1-based selection such as ``1,3,5-8``."""
+    if count < 1:
+        raise ValueError(nothing_message)
 
     value = (selection or '').strip().lower()
-    if value in ('', '*', 'all', 'mind', 'összes'):
-        return list(range(1, chapter_count + 1))
+    if value in SELECT_ALL_WORDS:
+        return list(range(1, count + 1))
 
     chosen: set[int] = set()
     for item in value.split(','):
         item = item.strip()
         if not item:
-            raise ValueError('Empty item in chapter selection.')
+            raise ValueError(f'Empty item in {noun} selection.')
         match = re.fullmatch(r'(\d+)\s*-\s*(\d+)', item)
         if match:
             start, end = (int(part) for part in match.groups())
             if start > end:
-                raise ValueError(f'Invalid descending chapter range: {item}')
+                raise ValueError(f'Invalid descending {noun} range: {item}')
             chosen.update(range(start, end + 1))
         elif item.isdigit():
             chosen.add(int(item))
         else:
             raise ValueError(
-                'Use chapter numbers, commas and ranges, for example: 1,3,5-8.'
+                f'Use {noun} numbers, commas and ranges, for example: 1,3,5-8.'
             )
 
-    invalid = sorted(number for number in chosen if not 1 <= number <= chapter_count)
+    invalid = sorted(number for number in chosen if not 1 <= number <= count)
     if invalid:
         raise ValueError(
-            f'Chapter number out of range: {invalid[0]} '
-            f'(valid range: 1-{chapter_count}).'
+            f'{noun.capitalize()} number out of range: {invalid[0]} '
+            f'(valid range: 1-{count}).'
         )
     return sorted(chosen)
+
+
+def parse_chapter_selection(selection: str | None, chapter_count: int) -> list[int]:
+    """Parse print-style chapter numbers such as ``1,3,5-8``."""
+    return _parse_number_selection(
+        selection, chapter_count, 'chapter', 'This book has no chapters to export.'
+    )
+
+
+def parse_segment_selection(selection: str | None, segment_count: int) -> list[int]:
+    """Parse print-style segment numbers, 1-based within one chapter."""
+    return _parse_number_selection(
+        selection, segment_count, 'segment', 'This chapter has no segments to export.'
+    )
+
+
+def format_selection(numbers: list[int]) -> str:
+    """Render a selection compactly for a filename: ``[1,2,3,7]`` → ``1-3_7``.
+
+    Underscores rather than commas because ``_safe_name`` drops commas, which
+    would silently turn ``1,3`` into the single number ``13``.
+    """
+    parts: list[str] = []
+    for number in sorted(set(numbers)):
+        if parts and number == _run_end(parts[-1]) + 1:
+            parts[-1] = f'{_run_start(parts[-1])}-{number}'
+        else:
+            parts.append(str(number))
+    return '_'.join(parts)
+
+
+def _run_start(part: str) -> int:
+    return int(part.split('-')[0])
+
+
+def _run_end(part: str) -> int:
+    return int(part.split('-')[-1])
 
 
 def _safe_name(name: str) -> str:

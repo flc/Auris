@@ -30,6 +30,17 @@ omnivoice>=0.2.1
 transformers==5.3.0
 # Higgs TTS uses Transformers 5.13 in reader/.higgs_runtime via setup.py.
 # It must not replace this OmniVoice-compatible version in the main venv.
+#
+# Optional — Higgs quantization (Settings → Higgs → Quantization). The BF16
+# checkpoint is ~8.7 GiB of weights; on a card that cannot hold it the driver
+# pages the overflow through system memory and generation crawls. 8-bit or
+# 4-bit makes it resident. CUDA only:
+#   pip install bitsandbytes
+# F5-TTS shares this pin — it leaves transformers unbounded — but is installed
+# by setup.py with --no-deps so its training and cloud extras stay out.
+# Piper is installed by setup.py too (onnxruntime only, no torch). It is
+# GPL-3.0-or-later, unlike everything listed here, so it is kept out of this
+# file deliberately — see install_piper() in setup.py.
 accelerate>=1.13.0
 gradio>=6.0
 tensorboardX>=2.6

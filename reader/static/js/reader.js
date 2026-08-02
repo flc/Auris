@@ -271,6 +271,7 @@ async function openChapter(chapterId, options = {}) {
     fetch(`/api/books/${BOOK_ID}/characters`).then(r => r.json()),
   ]);
   renderContent(segments);
+  updateSegmentSelectionHint();
   refreshChapterGenerationPanel(chapterId);
 
   document.getElementById('chapter-content').scrollTop = 0;
@@ -1422,8 +1423,22 @@ document.querySelectorAll('input[name="exp-mode"]').forEach(input => {
     const selected = document.querySelector('input[name="exp-mode"]:checked').value;
     document.getElementById('chapter-selection-wrap')
       .classList.toggle('hidden', selected !== 'chapterwise');
+    // Segments only make sense inside one chapter, so this pairs with the
+    // opposite scope.
+    document.getElementById('segment-selection-wrap')
+      .classList.toggle('hidden', selected !== 'chapter');
   });
 });
+
+function updateSegmentSelectionHint() {
+  const hint = document.getElementById('exp-segments-hint');
+  if (!hint) return;
+  // The playback bar already counts segments 1-based, so the number shown
+  // there is the number to type here.
+  hint.textContent = segments.length
+    ? `all, a range, or 1,3,5-8 — the counter numbering (1-${segments.length}).`
+    : 'Use all, a range, or comma-separated numbers.';
+}
 
 document.getElementById('do-export-btn').onclick = async () => {
   if (!currentChapterId) { showToast('Open a chapter first.'); return; }
@@ -1472,6 +1487,9 @@ document.getElementById('do-export-btn').onclick = async () => {
         sub_fmt: subFmt,
         chapters: mode === 'chapterwise'
           ? document.getElementById('exp-chapters').value
+          : null,
+        segments: mode === 'chapter'
+          ? document.getElementById('exp-segments').value
           : null,
       }),
     });

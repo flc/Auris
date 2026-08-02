@@ -77,6 +77,8 @@ async function loadSettings() {
   document.getElementById('higgs-model-path').value = _settings.higgs_model_path || '';
   document.getElementById('higgs-model-repo').value =
     _settings.higgs_model_repo || 'multimodalart/higgs-audio-v3-tts-4b-transformers';
+  document.getElementById('higgs-quantization').value =
+    _settings.higgs_quantization || 'none';
   document.getElementById('higgs-temperature').value = _settings.higgs_temperature ?? 0.8;
   document.getElementById('higgs-top-p').value = _settings.higgs_top_p ?? 0.95;
   document.getElementById('higgs-top-k').value = _settings.higgs_top_k ?? 50;
@@ -92,6 +94,68 @@ async function loadSettings() {
     _settings.higgs_default_expressive || 'none';
   toggleHiggsSource(higgsSrc);
   toggleHiggsPromptMode(_settings.higgs_prompt_mode || 'raw');
+
+  const f5Src = _settings.f5_model_source || 'download';
+  const f5SrcRadio = document.querySelector(
+    `input[name="f5_model_source"][value="${f5Src}"]`
+  );
+  if (f5SrcRadio) f5SrcRadio.checked = true;
+  document.getElementById('f5-model-path').value = _settings.f5_model_path || '';
+  document.getElementById('f5-model-repo').value =
+    _settings.f5_model_repo || 'Maxdorger29/f5-tts-hungarian';
+  document.getElementById('f5-model-file').value =
+    _settings.f5_model_file || 'model_last_final.safetensors';
+  document.getElementById('f5-vocab-file').value = _settings.f5_vocab_file || 'vocab.txt';
+  document.getElementById('f5-ref-audio').value = _settings.f5_ref_audio || '';
+  document.getElementById('f5-ref-text').value = _settings.f5_ref_text || '';
+  document.getElementById('f5-nfe-step').value = _settings.f5_nfe_step ?? 32;
+  document.getElementById('f5-cfg-strength').value = _settings.f5_cfg_strength ?? 2.0;
+  document.getElementById('f5-sway-sampling-coef').value =
+    _settings.f5_sway_sampling_coef ?? -1.0;
+  document.getElementById('f5-cross-fade-sec').value = _settings.f5_cross_fade_sec ?? 0.15;
+  document.getElementById('f5-seed').value = _settings.f5_seed ?? -1;
+  document.getElementById('f5-trim-onset').checked = _settings.f5_trim_onset !== false;
+
+  const piperSrc = _settings.piper_voice_source || 'download';
+  const piperSrcRadio = document.querySelector(
+    `input[name="piper_voice_source"][value="${piperSrc}"]`
+  );
+  if (piperSrcRadio) piperSrcRadio.checked = true;
+  document.getElementById('piper-voice-dir').value = _settings.piper_voice_dir || '';
+  document.getElementById('piper-voice-repo').value =
+    _settings.piper_voice_repo || 'rhasspy/piper-voices';
+  document.getElementById('piper-narrator-voice').value =
+    _settings.piper_narrator_voice || 'hu_HU-anna-medium';
+  document.getElementById('piper-character-voices').value =
+    _settings.piper_character_voices || 'hu_HU-berta-medium,hu_HU-imre-medium';
+  document.getElementById('piper-match-gender').checked =
+    _settings.piper_match_gender !== false;
+  document.getElementById('piper-length-scale').value = _settings.piper_length_scale ?? 1.0;
+  document.getElementById('piper-noise-scale').value = _settings.piper_noise_scale ?? -1.0;
+  document.getElementById('piper-noise-w-scale').value =
+    _settings.piper_noise_w_scale ?? -1.0;
+  document.getElementById('piper-normalize-audio').checked =
+    _settings.piper_normalize_audio !== false;
+  togglePiperSource(piperSrc);
+  toggleF5Source(f5Src);
+
+  // ElevenLabs
+  document.getElementById('elevenlabs-api-key').value = _settings.elevenlabs_api_key || '';
+  document.getElementById('elevenlabs-voice-id').value = _settings.elevenlabs_voice_id || '';
+  ensureModelOption(
+    document.getElementById('elevenlabs-model-id'),
+    _settings.elevenlabs_model_id || 'eleven_multilingual_v2'
+  );
+  document.getElementById('elevenlabs-output-format').value =
+    _settings.elevenlabs_output_format || 'mp3_44100_128';
+  document.getElementById('elevenlabs-stability').value = _settings.elevenlabs_stability ?? 0.5;
+  document.getElementById('elevenlabs-similarity').value =
+    _settings.elevenlabs_similarity_boost ?? 0.75;
+  document.getElementById('elevenlabs-style').value = _settings.elevenlabs_style ?? 0;
+  document.getElementById('elevenlabs-speaker-boost').checked =
+    _settings.elevenlabs_speaker_boost !== false;
+  document.getElementById('elevenlabs-timeout-sec').value =
+    _settings.elevenlabs_timeout_sec ?? 120;
 
   // Character / dialogue-speaker detection
   const detectionMode = _settings.character_detection_mode || 'legacy';
@@ -166,6 +230,15 @@ async function loadSettings() {
     _settings.audio_mastering !== false;
 
   refreshAccelStatus();
+  if (engine === 'elevenlabs' || engine === 'higgs') {
+    fetch('/api/tts/status')
+      .then(r => r.json())
+      .then(st => {
+        refreshElevenLabsStatus(st);
+        refreshHiggsStatus(st);
+      })
+      .catch(() => {});
+  }
 
   // UI — theme
   selectTheme(_settings.theme || 'night', false);
@@ -348,6 +421,33 @@ function toggleEngineSettings(engine) {
   document.querySelectorAll('.higgs-settings').forEach(el =>
     el.classList.toggle('hidden', engine !== 'higgs')
   );
+  document.querySelectorAll('.piper-settings').forEach(el =>
+    el.classList.toggle('hidden', engine !== 'piper')
+  );
+  document.querySelectorAll('.f5-settings').forEach(el =>
+    el.classList.toggle('hidden', engine !== 'f5')
+  );
+  document.querySelectorAll('.elevenlabs-settings').forEach(el =>
+    el.classList.toggle('hidden', engine !== 'elevenlabs')
+  );
+}
+
+document.querySelectorAll('input[name="piper_voice_source"]').forEach(el => {
+  el.addEventListener('change', () => togglePiperSource(el.value));
+});
+
+function togglePiperSource(src) {
+  document.getElementById('piper-panel-local').classList.toggle('hidden', src !== 'local');
+  document.getElementById('piper-panel-download').classList.toggle('hidden', src !== 'download');
+}
+
+document.querySelectorAll('input[name="f5_model_source"]').forEach(el => {
+  el.addEventListener('change', () => toggleF5Source(el.value));
+});
+
+function toggleF5Source(src) {
+  document.getElementById('f5-panel-local').classList.toggle('hidden', src !== 'local');
+  document.getElementById('f5-panel-download').classList.toggle('hidden', src !== 'download');
 }
 
 document.querySelectorAll('input[name="higgs_model_source"]').forEach(el => {
@@ -478,10 +578,14 @@ async function reloadTTS() {
         clearInterval(t);
         hint.textContent = 'Model ready.';
         refreshAccelStatus(st);
+        refreshElevenLabsStatus(st);
+        refreshHiggsStatus(st);
       } else if (st.state === 'error') {
         clearInterval(t);
         hint.textContent = 'Load failed: ' + (st.message || 'error');
         hint.className = 'status-hint status-error';
+        refreshElevenLabsStatus(st);
+        refreshHiggsStatus(st);
       }
     } catch (_) {}
     if (n > 900) {
@@ -511,6 +615,44 @@ async function refreshAccelStatus(st) {
   } catch (_) {
     el.textContent = '';
   }
+}
+
+function refreshHiggsStatus(st) {
+  const el = document.getElementById('higgs-status');
+  if (!el || !st || st.engine !== 'higgs') return;
+  if (st.state === 'error') {
+    el.textContent = st.message || 'Not available.';
+    el.className = 'status-hint status-error';
+    return;
+  }
+  const a = st.accel || {};
+  el.textContent = a.message || '';
+  // Weights that do not fit are reported by the engine; surface that as a
+  // warning rather than a normal ready line.
+  const paging =
+    a.vram_allocated_gib && a.vram_total_gib &&
+    a.vram_allocated_gib > a.vram_total_gib * 0.9;
+  el.className = paging ? 'status-hint status-warn' : 'status-hint status-ok';
+}
+
+function refreshElevenLabsStatus(st) {
+  const el = document.getElementById('elevenlabs-status');
+  if (!el || !st || st.engine !== 'elevenlabs') return;
+  if (st.state === 'error') {
+    el.textContent = st.message || 'Not available.';
+    el.className = 'status-hint status-error';
+    return;
+  }
+  const quota = st.quota || {};
+  const parts = [`Voice ${st.voice_id || '—'}`, `model ${st.model || '—'}`];
+  if (quota.character_limit) {
+    parts.push(
+      `quota ${quota.character_count}/${quota.character_limit} characters used`
+    );
+  }
+  if (st.characters_sent) parts.push(`${st.characters_sent} sent this session`);
+  el.textContent = parts.join(' · ');
+  el.className = 'status-hint status-ok';
 }
 
 // ── spaCy ─────────────────────────────────────────────────────────────────────
@@ -562,6 +704,12 @@ async function saveSettings() {
   const higgsSrc = document.querySelector(
     'input[name="higgs_model_source"]:checked'
   )?.value || 'download';
+  const piperSrc = document.querySelector(
+    'input[name="piper_voice_source"]:checked'
+  )?.value || 'download';
+  const f5Src = document.querySelector(
+    'input[name="f5_model_source"]:checked'
+  )?.value || 'download';
   const payload = {
     tts_engine:       document.getElementById('tts-engine').value || 'omnivoice',
     model_source:      src,
@@ -571,6 +719,7 @@ async function saveSettings() {
     higgs_model_source: higgsSrc,
     higgs_model_path:  document.getElementById('higgs-model-path').value.trim(),
     higgs_model_repo:  document.getElementById('higgs-model-repo').value.trim(),
+    higgs_quantization: document.getElementById('higgs-quantization').value || 'none',
     higgs_temperature: parseFloat(document.getElementById('higgs-temperature').value),
     higgs_top_p:       parseFloat(document.getElementById('higgs-top-p').value),
     higgs_top_k:       parseInt(document.getElementById('higgs-top-k').value, 10),
@@ -582,6 +731,49 @@ async function saveSettings() {
     higgs_default_emotion: document.getElementById('higgs-default-emotion').value,
     higgs_default_style: document.getElementById('higgs-default-style').value,
     higgs_default_expressive: document.getElementById('higgs-default-expressive').value,
+    f5_model_source:   f5Src,
+    f5_model_path:     document.getElementById('f5-model-path').value.trim(),
+    f5_model_repo:     document.getElementById('f5-model-repo').value.trim(),
+    f5_model_file:     document.getElementById('f5-model-file').value.trim(),
+    f5_vocab_file:     document.getElementById('f5-vocab-file').value.trim(),
+    f5_ref_audio:      document.getElementById('f5-ref-audio').value.trim(),
+    f5_ref_text:       document.getElementById('f5-ref-text').value.trim(),
+    f5_nfe_step:       parseInt(document.getElementById('f5-nfe-step').value, 10),
+    f5_cfg_strength:   parseFloat(document.getElementById('f5-cfg-strength').value),
+    f5_sway_sampling_coef: parseFloat(
+      document.getElementById('f5-sway-sampling-coef').value
+    ),
+    f5_cross_fade_sec: parseFloat(document.getElementById('f5-cross-fade-sec').value),
+    f5_seed:           parseInt(document.getElementById('f5-seed').value, 10),
+    f5_trim_onset:     document.getElementById('f5-trim-onset').checked,
+    piper_voice_source: piperSrc,
+    piper_voice_dir:   document.getElementById('piper-voice-dir').value.trim(),
+    piper_voice_repo:  document.getElementById('piper-voice-repo').value.trim(),
+    piper_narrator_voice:
+      document.getElementById('piper-narrator-voice').value.trim(),
+    piper_character_voices:
+      document.getElementById('piper-character-voices').value.trim(),
+    piper_match_gender: document.getElementById('piper-match-gender').checked,
+    piper_length_scale: parseFloat(document.getElementById('piper-length-scale').value),
+    piper_noise_scale: parseFloat(document.getElementById('piper-noise-scale').value),
+    piper_noise_w_scale: parseFloat(
+      document.getElementById('piper-noise-w-scale').value
+    ),
+    piper_normalize_audio:
+      document.getElementById('piper-normalize-audio').checked,
+    elevenlabs_api_key: document.getElementById('elevenlabs-api-key').value.trim(),
+    elevenlabs_voice_id: document.getElementById('elevenlabs-voice-id').value.trim(),
+    elevenlabs_model_id: document.getElementById('elevenlabs-model-id').value,
+    elevenlabs_output_format: document.getElementById('elevenlabs-output-format').value,
+    elevenlabs_stability: parseFloat(document.getElementById('elevenlabs-stability').value),
+    elevenlabs_similarity_boost: parseFloat(
+      document.getElementById('elevenlabs-similarity').value
+    ),
+    elevenlabs_style: parseFloat(document.getElementById('elevenlabs-style').value),
+    elevenlabs_speaker_boost: document.getElementById('elevenlabs-speaker-boost').checked,
+    elevenlabs_timeout_sec: parseInt(
+      document.getElementById('elevenlabs-timeout-sec').value, 10
+    ) || 120,
     character_detection_mode: document.getElementById('character-detection-mode').value,
     llm_provider:      document.getElementById('llm-provider').value,
     llm_base_url:      document.getElementById('llm-base-url').value.trim(),

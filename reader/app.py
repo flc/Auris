@@ -1147,6 +1147,9 @@ def preview_character(book_id, char_id):
             sample_text=sample_text,
             ref_audio=ref_audio,
             ref_text=ref_text,
+            # Engines that cast per character (Piper) must preview the voice
+            # playback will really use, not the narrator's.
+            speaker=row['name'],
         )
         return jsonify({'audio_url': f'/api/audio/{result["cache_key"]}'})
     except Exception as e:
@@ -1500,6 +1503,9 @@ def tts_generate():
         'speed': seg['speed'],
         'language': language,
         'lexicon': _book_pronunciation(book_id),
+        # None for narration. Engines that cannot clone use it to cast a
+        # distinct voice per character; the others ignore it.
+        'speaker': seg['character_name'] or None,
     }
     request_key = (
         seg['id'],
@@ -1744,6 +1750,7 @@ def _ensure_audio_for_chapter(
             'speed': seg['speed'],
             'language': language,
             'lexicon': lexicon,
+            'speaker': seg['character_name'] or None,
         })
 
     if not pending_items:
@@ -2153,7 +2160,14 @@ def _make_export_job() -> tuple[str, dict]:
     return job_id, job
 
 
-def _run_chapter_export(job_id: str, book_id: int, chapter_id: int, audio_fmt: str, sub_fmt: str):
+def _run_chapter_export(
+    job_id: str,
+    book_id: int,
+    chapter_id: int,
+    audio_fmt: str,
+    sub_fmt: str,
+    segment_numbers: list[int] | None = None,
+):
     job = _export_jobs[job_id]
     export_pool: TTSExportPool | None = None
     _export_exclusive_begin()
@@ -2171,6 +2185,14 @@ def _run_chapter_export(job_id: str, book_id: int, chapter_id: int, audio_fmt: s
             job['error'] = 'Chapter not found'
             return
         segs = _get_chapter_segments(chapter_id, book_id)
+        file_stem = None
+        if segment_numbers is not None and len(segment_numbers) != len(segs):
+            # A partial export must not overwrite the whole-chapter file, so the
+            # selection goes into the name.
+            file_stem = (
+                f"{ch['title']}_seg_{exporter.format_selection(segment_numbers)}"
+            )
+            segs = [segs[number - 1] for number in segment_numbers]
         job['total'] = len(segs)
         job['done'] = 0
         job['message'] = f'Generating audio (0/{len(segs)})'
@@ -2186,6 +2208,7 @@ def _run_chapter_export(job_id: str, book_id: int, chapter_id: int, audio_fmt: s
         )
         result = exporter.export_single_chapter(
             ch['title'], book['title'], segs, colors, audio_fmt, sub_fmt,
+            file_stem=file_stem,
             mastering=mastering,
             book_author=book['author'],
         )
@@ -2299,6 +2322,15 @@ def export_chapter(book_id, chapter_id):
     if tts.status()['state'] != 'ready':
         return jsonify({'error': 'TTS model not ready'}), 503
 
+    # Validate the selection here rather than in the worker so a typo comes back
+    # as a 400 instead of a job that fails after the export slot is taken.
+    try:
+        segment_numbers = exporter.parse_segment_selection(
+            body.get('segments'), len(_get_chapter_segments(chapter_id, book_id))
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
     with _chapter_generation_lock:
         active_id = _chapter_generation_active_job_id
         active = _chapter_generation_jobs.get(active_id) if active_id else None
@@ -2307,7 +2339,7 @@ def export_chapter(book_id, chapter_id):
         job_id, _ = _make_export_job()
     threading.Thread(
         target=_run_chapter_export,
-        args=(job_id, book_id, chapter_id, audio_fmt, sub_fmt),
+        args=(job_id, book_id, chapter_id, audio_fmt, sub_fmt, segment_numbers),
         daemon=True,
     ).start()
     return jsonify({'job_id': job_id})
@@ -2474,6 +2506,20 @@ def save_settings():
         'higgs_temperature', 'higgs_top_p', 'higgs_top_k',
         'higgs_max_new_tokens', 'higgs_seed', 'higgs_default_emotion',
         'higgs_default_style', 'higgs_default_expressive', 'higgs_prompt_mode',
+        'higgs_quantization', 'higgs_concurrency',
+        'f5_model_source', 'f5_model_path', 'f5_model_repo', 'f5_model_file',
+        'f5_vocab_file', 'f5_ref_audio', 'f5_ref_text', 'f5_nfe_step',
+        'f5_cfg_strength', 'f5_sway_sampling_coef', 'f5_cross_fade_sec',
+        'f5_seed', 'f5_trim_onset',
+        'piper_voice_source', 'piper_voice_dir', 'piper_voice_repo',
+        'piper_narrator_voice', 'piper_character_voices', 'piper_match_gender',
+        'piper_length_scale', 'piper_noise_scale', 'piper_noise_w_scale',
+        'piper_normalize_audio',
+        'elevenlabs_api_key', 'elevenlabs_voice_id', 'elevenlabs_model_id',
+        'elevenlabs_output_format', 'elevenlabs_stability',
+        'elevenlabs_similarity_boost', 'elevenlabs_style',
+        'elevenlabs_speaker_boost', 'elevenlabs_base_url',
+        'elevenlabs_timeout_sec',
         'narrator_instruct', 'single_narrator_mode', 'narrator_voice_lock',
         'default_speed', 'audio_format',
         'subtitle_format', 'theme', 'font_size', 'font_family', 'line_height',
@@ -2489,14 +2535,85 @@ def save_settings():
     }
     updates = {k: v for k, v in body.items() if k in allowed}
     if 'tts_engine' in updates:
+        from core.tts_router import ENGINE_NAMES
         engine = str(updates['tts_engine'] or 'omnivoice').strip().lower()
-        updates['tts_engine'] = engine if engine in ('omnivoice', 'higgs') else 'omnivoice'
+        updates['tts_engine'] = engine if engine in ENGINE_NAMES else 'omnivoice'
     if 'higgs_model_source' in updates:
         source = str(updates['higgs_model_source'] or 'download').strip().lower()
         updates['higgs_model_source'] = source if source in ('local', 'download') else 'download'
     if 'higgs_prompt_mode' in updates:
         mode = str(updates['higgs_prompt_mode'] or 'raw').strip().lower()
         updates['higgs_prompt_mode'] = mode if mode in ('raw', 'expressive') else 'raw'
+    if 'higgs_quantization' in updates:
+        from core.higgs_engine import QUANTIZATION_MODES
+        mode = str(updates['higgs_quantization'] or 'none').strip().lower()
+        updates['higgs_quantization'] = mode if mode in QUANTIZATION_MODES else 'none'
+    for key in ('elevenlabs_api_key', 'elevenlabs_voice_id', 'elevenlabs_model_id'):
+        if key in updates:
+            updates[key] = str(updates[key] or '').strip()
+    if 'elevenlabs_model_id' in updates and not updates['elevenlabs_model_id']:
+        updates['elevenlabs_model_id'] = 'eleven_multilingual_v2'
+    if 'elevenlabs_base_url' in updates:
+        updates['elevenlabs_base_url'] = (
+            str(updates['elevenlabs_base_url'] or '').strip().rstrip('/')
+            or 'https://api.elevenlabs.io'
+        )
+    if 'elevenlabs_output_format' in updates:
+        from core.elevenlabs_engine import SUPPORTED_OUTPUT_FORMATS
+        fmt = str(updates['elevenlabs_output_format'] or '').strip()
+        updates['elevenlabs_output_format'] = (
+            fmt if fmt in SUPPORTED_OUTPUT_FORMATS else 'mp3_44100_128'
+        )
+    if 'elevenlabs_speaker_boost' in updates:
+        updates['elevenlabs_speaker_boost'] = bool(updates['elevenlabs_speaker_boost'])
+    if 'f5_model_source' in updates:
+        source = str(updates['f5_model_source'] or 'download').strip().lower()
+        updates['f5_model_source'] = source if source in ('local', 'download') else 'download'
+    for key, fallback in (
+        ('f5_model_repo', 'Maxdorger29/f5-tts-hungarian'),
+        ('f5_model_file', 'model_last_final.safetensors'),
+        ('f5_vocab_file', 'vocab.txt'),
+    ):
+        if key in updates:
+            updates[key] = str(updates[key] or '').strip() or fallback
+    for key in ('f5_model_path', 'f5_ref_audio', 'f5_ref_text'):
+        if key in updates:
+            updates[key] = str(updates[key] or '').strip()
+    if 'f5_trim_onset' in updates:
+        updates['f5_trim_onset'] = bool(updates['f5_trim_onset'])
+    if 'piper_voice_source' in updates:
+        source = str(updates['piper_voice_source'] or 'download').strip().lower()
+        updates['piper_voice_source'] = source if source in ('local', 'download') else 'download'
+    if 'piper_voice_dir' in updates:
+        updates['piper_voice_dir'] = str(updates['piper_voice_dir'] or '').strip()
+    if 'piper_voice_repo' in updates:
+        updates['piper_voice_repo'] = (
+            str(updates['piper_voice_repo'] or '').strip() or 'rhasspy/piper-voices'
+        )
+    if 'piper_narrator_voice' in updates or 'piper_character_voices' in updates:
+        # A malformed voice name only fails at synthesis time, as a download
+        # 404 mid-chapter. Reject it here instead.
+        from core.piper_engine import (
+            DEFAULT_CHARACTER_VOICES,
+            DEFAULT_NARRATOR_VOICE,
+            is_voice_name,
+        )
+
+        if 'piper_narrator_voice' in updates:
+            name = str(updates['piper_narrator_voice'] or '').strip()
+            updates['piper_narrator_voice'] = (
+                name if is_voice_name(name) else DEFAULT_NARRATOR_VOICE
+            )
+        if 'piper_character_voices' in updates:
+            names = [
+                part.strip()
+                for part in str(updates['piper_character_voices'] or '').split(',')
+                if is_voice_name(part.strip())
+            ]
+            updates['piper_character_voices'] = ','.join(names) or DEFAULT_CHARACTER_VOICES
+    for key in ('piper_match_gender', 'piper_normalize_audio'):
+        if key in updates:
+            updates[key] = bool(updates[key])
     if 'character_detection_mode' in updates:
         mode = str(updates['character_detection_mode'] or 'legacy').strip().lower()
         updates['character_detection_mode'] = (
@@ -2527,6 +2644,16 @@ def save_settings():
     for key, default, low, high in (
         ('higgs_temperature', 0.8, 0.0, 2.0),
         ('higgs_top_p', 0.95, 0.0, 1.0),
+        ('elevenlabs_stability', 0.5, 0.0, 1.0),
+        ('elevenlabs_similarity_boost', 0.75, 0.0, 1.0),
+        ('elevenlabs_style', 0.0, 0.0, 1.0),
+        ('f5_cfg_strength', 2.0, 0.0, 6.0),
+        ('f5_sway_sampling_coef', -1.0, -2.0, 2.0),
+        ('f5_cross_fade_sec', 0.15, 0.0, 1.0),
+        ('piper_length_scale', 1.0, 0.5, 2.0),
+        # -1 keeps whatever the voice's own config specifies.
+        ('piper_noise_scale', -1.0, -1.0, 2.0),
+        ('piper_noise_w_scale', -1.0, -1.0, 2.0),
     ):
         if key in updates:
             try:
@@ -2537,6 +2664,12 @@ def save_settings():
         ('higgs_top_k', 50, 0, 200),
         ('higgs_max_new_tokens', 1024, 128, 4096),
         ('higgs_seed', -1, -1, 2147483647),
+        # Diagnostic knob with no UI control; see core/settings.py. Throughput
+        # only, so it is deliberately absent from higgs_audio_keys below.
+        ('higgs_concurrency', 0, 0, 4),
+        ('elevenlabs_timeout_sec', 120, 15, 900),
+        ('f5_nfe_step', 32, 8, 64),
+        ('f5_seed', -1, -1, 2147483647),
     ):
         if key in updates:
             try:
@@ -2597,20 +2730,57 @@ def save_settings():
         'higgs_model_repo', 'higgs_temperature', 'higgs_top_p', 'higgs_top_k',
         'higgs_max_new_tokens', 'higgs_seed', 'higgs_default_emotion',
         'higgs_default_style', 'higgs_default_expressive', 'higgs_prompt_mode',
+        'higgs_quantization',
+    }
+    elevenlabs_audio_keys = {
+        'tts_engine', 'elevenlabs_voice_id', 'elevenlabs_model_id',
+        'elevenlabs_output_format', 'elevenlabs_stability',
+        'elevenlabs_similarity_boost', 'elevenlabs_style',
+        'elevenlabs_speaker_boost',
+    }
+    f5_audio_keys = {
+        'tts_engine', 'f5_model_source', 'f5_model_path', 'f5_model_repo',
+        'f5_model_file', 'f5_vocab_file', 'f5_ref_audio', 'f5_ref_text',
+        'f5_nfe_step', 'f5_cfg_strength', 'f5_sway_sampling_coef',
+        'f5_cross_fade_sec', 'f5_seed', 'f5_trim_onset',
+    }
+    # Recasting a character or renaming a voice changes who speaks each line,
+    # so stored segments have to be dropped like any other audio-affecting key.
+    piper_audio_keys = {
+        'tts_engine', 'piper_voice_source', 'piper_voice_dir', 'piper_voice_repo',
+        'piper_narrator_voice', 'piper_character_voices', 'piper_match_gender',
+        'piper_length_scale', 'piper_noise_scale', 'piper_noise_w_scale',
+        'piper_normalize_audio',
     }
     omnivoice_audio_keys = {
         'tts_num_step',
         'normalize_text',
     }
-    # Both engines read these: the lexicon rewrites the spoken text, and the
-    # voice lock decides whether a segment is voice-designed or cloned.
+    # Every engine reads the lexicon: it rewrites the text that is spoken.
     shared_audio_keys = {
         'pronunciation_dict',
-        'narrator_voice_lock',
     }
+    # The voice lock only decides between voice design and cloning on engines
+    # that design a voice at all. F5 clones from a mandatory reference clip and
+    # ElevenLabs addresses a fixed voice id, so for those a re-render would
+    # produce identical audio — and on a metered cloud engine it would also be
+    # billed again.
+    from core.tts_router import engine_uses_voice_lock
+    active_engine = str(
+        updates.get('tts_engine') or previous.get('tts_engine') or 'omnivoice'
+    )
+    if engine_uses_voice_lock(active_engine):
+        shared_audio_keys.add('narrator_voice_lock')
     if any(
         key in updates and updates[key] != previous.get(key)
-        for key in higgs_audio_keys | omnivoice_audio_keys | shared_audio_keys
+        for key in (
+            higgs_audio_keys
+            | elevenlabs_audio_keys
+            | f5_audio_keys
+            | piper_audio_keys
+            | omnivoice_audio_keys
+            | shared_audio_keys
+        )
     ):
         with get_conn() as conn:
             conn.execute('DELETE FROM tts_segments')

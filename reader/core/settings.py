@@ -20,6 +20,8 @@ SETTINGS_FILE = _APP_DIR / 'data' / 'settings.json'
 # Default model path = <repo_root>/model_backup/OmniVoice
 _DEFAULT_MODEL_PATH = str(_REPO_ROOT / 'model_backup' / 'OmniVoice')
 _DEFAULT_HIGGS_MODEL_PATH = str(_REPO_ROOT / 'model_backup' / 'Higgs-TTS-3-4B')
+_DEFAULT_F5_MODEL_PATH = str(_REPO_ROOT / 'model_backup' / 'F5-TTS-Hungarian')
+_DEFAULT_PIPER_VOICE_DIR = str(_REPO_ROOT / 'model_backup' / 'piper-voices')
 LEGACY_NARRATOR_INSTRUCT = 'female, middle-aged, moderate pitch, american accent'
 DEFAULT_NARRATOR_INSTRUCT = 'male, elderly, low pitch, british accent'
 TTS_EXPRESSION_POLICY_VERSION = 2
@@ -27,7 +29,8 @@ TTS_SEGMENT_BOUNDARY_POLICY_VERSION = 2
 
 DEFAULTS: dict = {
     # Active TTS engine. Each engine keeps an independent model configuration.
-    'tts_engine': 'omnivoice',          # 'omnivoice' | 'higgs'
+    # 'omnivoice' | 'higgs' | 'f5' | 'piper' | 'elevenlabs'
+    'tts_engine': 'omnivoice',
 
     # OmniVoice model
     'model_source': 'local',           # 'local' | 'download'
@@ -50,6 +53,74 @@ DEFAULTS: dict = {
     'higgs_default_emotion': 'none',
     'higgs_default_style': 'none',
     'higgs_default_expressive': 'none',
+    # 'none' | '8bit' | '4bit'. The BF16 checkpoint is 4.65B parameters —
+    # ~8.7 GiB of weights. A card that cannot hold that pages the overflow
+    # through host memory, and the decoder pays a PCIe transfer per audio
+    # token. Quantizing the transformer body (the fused audio embedding and
+    # head stay BF16) is what makes it resident. Needs bitsandbytes + CUDA.
+    'higgs_quantization': 'none',
+    # Segments decoded at once inside the single Higgs worker. Not exposed in
+    # the UI: it is a diagnostic knob, because measurement says overlapping
+    # makes things slower here. Threads share the weights and the codec, so
+    # only the KV cache is per request — but one decode stream already
+    # saturates the GPU, and the loops then contend for the GIL. Measured on an
+    # RTX 5070 Laptop at 4-bit with nothing paging: 1 lane 0.71x realtime,
+    # 2 lanes 0.43x, 3 lanes 0.31x. 0 = auto, which is serial.
+    'higgs_concurrency': 0,
+
+    # F5-TTS with a Hungarian community checkpoint. Runs in the main venv —
+    # its Transformers requirement is unpinned, so unlike Higgs it needs no
+    # isolated runtime. It clones only: there is no voice design, so the
+    # narrator reference WAV and its exact transcript are mandatory.
+    'f5_model_source': 'download',     # 'local' | 'download' (HF cache)
+    'f5_model_path': _DEFAULT_F5_MODEL_PATH,
+    'f5_model_repo': 'Maxdorger29/f5-tts-hungarian',
+    'f5_model_file': 'model_last_final.safetensors',
+    'f5_vocab_file': 'vocab.txt',
+    'f5_ref_audio': '',                # 5-15s WAV; shorter clones unreliably
+    'f5_ref_text': '',                 # must transcribe f5_ref_audio exactly
+    'f5_nfe_step': 32,
+    'f5_cfg_strength': 2.0,
+    'f5_sway_sampling_coef': -1.0,
+    'f5_cross_fade_sec': 0.15,
+    'f5_target_rms': 0.1,
+    'f5_seed': -1,
+    # The DiT backbone bursts while attention warms up; trim it off the front.
+    'f5_trim_onset': True,
+
+    # Piper — ONNX on the CPU, no VRAM and no torch. It cannot clone, but each
+    # voice is its own small model, so characters are cast across the voice
+    # list below instead of all sharing the narrator's timbre.
+    'piper_voice_source': 'download',  # 'local' | 'download' (HF cache)
+    'piper_voice_dir': _DEFAULT_PIPER_VOICE_DIR,
+    'piper_voice_repo': 'rhasspy/piper-voices',
+    'piper_narrator_voice': 'hu_HU-anna-medium',
+    # Comma-separated. The narrator's own voice is excluded from casting so a
+    # character never shares its timbre.
+    'piper_character_voices': 'hu_HU-berta-medium,hu_HU-imre-medium',
+    # Cast male/female characters onto voices of the same gender when the
+    # character description states one.
+    'piper_match_gender': True,
+    # Global duration trim on top of per-scene speed. >1 is slower.
+    'piper_length_scale': 1.0,
+    # -1 keeps the value baked into the voice's own config.
+    'piper_noise_scale': -1.0,
+    'piper_noise_w_scale': -1.0,
+    'piper_normalize_audio': True,
+
+    # ElevenLabs cloud TTS. The whole book is read by one configured voice;
+    # narrator instructions and reference clips are not used by this engine yet.
+    # ELEVENLABS_API_KEY in the environment overrides the stored key.
+    'elevenlabs_api_key': '',
+    'elevenlabs_voice_id': '',
+    'elevenlabs_model_id': 'eleven_multilingual_v2',
+    'elevenlabs_output_format': 'mp3_44100_128',
+    'elevenlabs_stability': 0.5,
+    'elevenlabs_similarity_boost': 0.75,
+    'elevenlabs_style': 0.0,
+    'elevenlabs_speaker_boost': True,
+    'elevenlabs_base_url': 'https://api.elevenlabs.io',
+    'elevenlabs_timeout_sec': 120,
 
     # Narrator
     'narrator_instruct': DEFAULT_NARRATOR_INSTRUCT,
