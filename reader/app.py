@@ -5,6 +5,7 @@ Offline Ebook Reader — Flask application.
 import base64
 import logging
 import os
+import re
 import threading
 import uuid
 
@@ -112,6 +113,41 @@ VOICE_PREVIEW_TEXTS = {
 
 def _preview_text(language: str | None) -> str:
     return VOICE_PREVIEW_TEXTS.get(str(language or '').strip().lower()[:2], VOICE_PREVIEW_TEXT)
+
+
+def _character_preview_text(name: str) -> str:
+    """The stock line a character reads when Voice Studio previews its voice."""
+    return (
+        f'Hello. I am {name}. '
+        'This preview should sound clear, steady, and easy to understand.'
+    )
+
+
+# One preview is one synthesis call: minutes on a local 4B model, billed
+# characters on a cloud engine. The Voice Studio textarea enforces the same
+# limit, so this only bites direct API callers.
+PREVIEW_TEXT_MAX_CHARS = 600
+
+
+# Character names come from an LLM or the book itself, so they can hold
+# anything. Keep letters, digits, spaces and simple separators; accented
+# letters survive because \w is Unicode-aware.
+_UNSAFE_FILENAME_RE = re.compile(r'[^\w.\- ]+')
+
+
+def _download_name(requested: str) -> str:
+    """A safe .wav filename for a downloaded preview."""
+    cleaned = _UNSAFE_FILENAME_RE.sub('', str(requested or ''))
+    cleaned = cleaned.strip().strip('.')[:60].strip() or 'preview'
+    return f'{cleaned}.wav'
+
+
+def _requested_preview_text(body: dict, default: str) -> str:
+    """Preview text typed in Voice Studio, or the default when left empty."""
+    requested = body.get('sample_text')
+    if not isinstance(requested, str) or not requested.strip():
+        return default
+    return requested.strip()[:PREVIEW_TEXT_MAX_CHARS]
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -410,6 +446,8 @@ def voice_studio_page(book_id):
         'voice_studio.html',
         book=book_data,
         current_chapter=dict(current_chapter) if current_chapter else None,
+        narrator_preview_text=_preview_text(book_data.get('language')),
+        preview_text_max_chars=PREVIEW_TEXT_MAX_CHARS,
     )
 
 
@@ -1086,6 +1124,10 @@ def list_characters(book_id):
             (book_id,)
         ).fetchall()
     characters = [dict(r) for r in rows]
+    for character in characters:
+        # Voice Studio prefills its preview box with this, so the default line
+        # is defined in one place instead of being rebuilt in the browser.
+        character['preview_text'] = _character_preview_text(character['name'])
     if chapter_character_names is not None:
         characters = [
             character
@@ -1136,10 +1178,7 @@ def preview_character(book_id, char_id):
     ref_audio = row['ref_audio_path'] if row['ref_audio_path'] else None
     requested_ref_text = body.get('ref_text', row['ref_text'])
     ref_text = requested_ref_text.strip() if ref_audio and isinstance(requested_ref_text, str) and requested_ref_text.strip() else None
-    sample_text = (
-        f'Hello. I am {row["name"]}. '
-        'This preview should sound clear, steady, and easy to understand.'
-    )
+    sample_text = _requested_preview_text(body, _character_preview_text(row['name']))
 
     try:
         result = tts.generate_preview(
@@ -1266,7 +1305,7 @@ def preview_narrator(book_id):
     try:
         result = tts.generate_preview(
             instruct=instruct,
-            sample_text=_preview_text(language),
+            sample_text=_requested_preview_text(body, _preview_text(language)),
             ref_audio=narrator_ref,
             ref_text=narrator_ref_text,
             language=language,
@@ -1614,6 +1653,16 @@ def serve_audio(cache_key):
     path = os.path.join(AUDIO_CACHE_DIR, f'{cache_key}.wav')
     if not os.path.exists(path):
         return '', 404
+    # Voice Studio's Download button asks for the very same cached WAV that
+    # playback streams, only as an attachment under a readable name.
+    requested_name = request.args.get('download')
+    if requested_name:
+        return send_file(
+            path,
+            mimetype='audio/wav',
+            as_attachment=True,
+            download_name=_download_name(requested_name),
+        )
     return send_file(path, mimetype='audio/wav')
 
 

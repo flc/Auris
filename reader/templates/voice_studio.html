@@ -90,11 +90,24 @@
               Saving re-synthesizes the affected segments.
             </div>
           </div>
+          <div class="clone-section">
+            <label for="narrator-preview-text">Preview text</label>
+            <textarea id="narrator-preview-text" class="reference-text" rows="2"
+                      maxlength="{{ preview_text_max_chars }}"
+                      placeholder="Leave empty for the default sample.">{{ narrator_preview_text }}</textarea>
+            <div class="studio-note">
+              Only used by the Preview button — it is never saved and never
+              reaches playback or export. Empty falls back to the default
+              sample in the book's language. Up to {{ preview_text_max_chars }}
+              characters, because one preview is one full synthesis call.
+            </div>
+          </div>
           <!-- Last in the card: Save covers every field above it, including
                the transcript and the pronunciation rules. -->
           <div class="char-card-footer card-actions">
             <span class="instruct-preview" id="narrator-instruct-preview"></span>
             <button class="btn btn-sm btn-ghost preview-btn" data-char-id="narrator">&#9654; Preview</button>
+            <button class="btn btn-sm btn-ghost preview-btn" id="narrator-download-btn" type="button">&#11015; Download WAV</button>
             <button class="btn btn-sm btn-primary" onclick="saveNarrator()">Save narrator</button>
           </div>
         </div>
@@ -134,6 +147,7 @@
 <script>window.NARRATOR_REF_AUDIO_NAME = {{ (book.narrator_ref_audio_name or '')|tojson }};</script>
 <script>window.CURRENT_CHAPTER_ID = {{ current_chapter.id if current_chapter else 'null' }};</script>
 <script>window.BOOK_PRONUNCIATION = {{ (book.pronunciation_dict or '')|tojson }};</script>
+<script>window.PREVIEW_TEXT_MAX_CHARS = {{ preview_text_max_chars }};</script>
 <script src="/static/js/lexicon_table.js"></script>
 <script src="/static/js/voice_studio.js"></script>
 {% endblock %}

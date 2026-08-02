@@ -9,6 +9,7 @@ let singleNarratorMode = Boolean(window.SINGLE_NARRATOR_MODE);
 let narratorHasRefAudio = Boolean(window.NARRATOR_HAS_REF_AUDIO);
 let narratorRefAudioName = window.NARRATOR_REF_AUDIO_NAME || "Previously uploaded WAV";
 const previewAudio = document.getElementById("preview-audio");
+const PREVIEW_TEXT_MAX_CHARS = Number(window.PREVIEW_TEXT_MAX_CHARS) || 600;
 
 const GENDERS = ["male", "female"];
 const AGES = ["child", "teenager", "young adult", "middle-aged", "elderly"];
@@ -183,7 +184,7 @@ async function loadCharacters() {
       const initial = ch.name.charAt(0).toUpperCase();
       const genderBadge = `<span class="char-gender gender-${ch.gender}">${ch.gender}</span>`;
       return `
-      <div class="character-card" id="card-${ch.id}">
+      <div class="character-card" id="card-${ch.id}" data-char-name="${esc(ch.name)}">
         <div class="char-avatar" style="${avatarStyle}">${initial}</div>
         <div class="char-details">
           <span class="char-name">${esc(ch.name)} ${genderBadge} <span class="char-freq">x ${ch.frequency}</span></span>
@@ -216,9 +217,15 @@ async function loadCharacters() {
             </div>
             <div class="studio-note">Best results: a clean, single-speaker, 3–10 second clip in the target language.</div>
           </div>
+          <div class="clone-section">
+            <label for="preview-text-${ch.id}">Preview text</label>
+            <textarea id="preview-text-${ch.id}" class="reference-text" rows="2" maxlength="${PREVIEW_TEXT_MAX_CHARS}" placeholder="Leave empty for the default sample.">${esc(ch.preview_text || "")}</textarea>
+            <div class="studio-note">Only used by the Preview button — never saved, never reaches playback or export. Empty falls back to the default line for this character.</div>
+          </div>
           <div class="char-card-footer card-actions">
             <span class="instruct-preview" id="ins-${ch.id}">${esc(ch.instruct)}</span>
             <button class="btn btn-sm btn-ghost preview-btn" onclick="previewChar(${ch.id})">&#9654; Preview</button>
+            <button class="btn btn-sm btn-ghost preview-btn" onclick="downloadChar(${ch.id})">&#11015; Download WAV</button>
             <button class="btn btn-sm btn-primary" onclick="saveChar(${ch.id})">Save character</button>
           </div>
         </div>
@@ -255,21 +262,56 @@ async function saveChar(charId) {
   }
 }
 
-async function previewChar(charId) {
-  const instruct = updateInstructPreview(charId);
-  const refText = document.getElementById(`ref-text-${charId}`)?.value.trim() || "";
-  const r = await fetch(`/api/books/${BOOK_ID}/characters/${charId}/preview`, {
+async function renderPreview(url, payload) {
+  const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruct, ref_text: refText }),
+    body: JSON.stringify(payload),
   });
   const d = await r.json();
   if (d.error) {
     alert(`Preview failed: ${d.error}`);
-    return;
+    return null;
   }
-  previewAudio.src = `${d.audio_url}?t=${Date.now()}`;
+  return d.audio_url;
+}
+
+// Download re-requests the preview rather than reusing whatever was played
+// last, so it always matches the fields as they stand now. Unchanged settings
+// hit the engine's audio cache, so this costs nothing the second time.
+function downloadAudio(audioUrl, name) {
+  const link = document.createElement("a");
+  link.href = `${audioUrl}?download=${encodeURIComponent(name)}`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function charPreviewPayload(charId) {
+  return {
+    instruct: updateInstructPreview(charId),
+    ref_text: document.getElementById(`ref-text-${charId}`)?.value.trim() || "",
+    sample_text: document.getElementById(`preview-text-${charId}`)?.value.trim() || "",
+  };
+}
+
+function charPreviewUrl(charId) {
+  return `/api/books/${BOOK_ID}/characters/${charId}/preview`;
+}
+
+async function previewChar(charId) {
+  const audioUrl = await renderPreview(charPreviewUrl(charId), charPreviewPayload(charId));
+  if (!audioUrl) return;
+  previewAudio.src = `${audioUrl}?t=${Date.now()}`;
   await previewAudio.play();
+}
+
+async function downloadChar(charId) {
+  const audioUrl = await renderPreview(charPreviewUrl(charId), charPreviewPayload(charId));
+  if (!audioUrl) return;
+  const name = document.getElementById(`card-${charId}`)?.dataset.charName
+    || `character-${charId}`;
+  downloadAudio(audioUrl, `${name}-preview`);
 }
 
 async function uploadRef(event, charId) {
@@ -396,24 +438,31 @@ async function saveNarrator() {
   }
 }
 
+function narratorPreviewPayload() {
+  return {
+    instruct: updateNarratorPreview(),
+    ref_text: document.getElementById("narrator-ref-text")?.value.trim() || "",
+    sample_text: document.getElementById("narrator-preview-text")?.value.trim() || "",
+  };
+}
+
+const NARRATOR_PREVIEW_URL = `/api/books/${BOOK_ID}/characters/narrator/preview`;
+
 async function previewNarrator() {
-  const instruct = updateNarratorPreview();
-  const refText = document.getElementById("narrator-ref-text")?.value.trim() || "";
-  const r = await fetch(`/api/books/${BOOK_ID}/characters/narrator/preview`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruct, ref_text: refText }),
-  });
-  const d = await r.json();
-  if (d.error) {
-    alert(`Preview failed: ${d.error}`);
-    return;
-  }
-  previewAudio.src = `${d.audio_url}?t=${Date.now()}`;
+  const audioUrl = await renderPreview(NARRATOR_PREVIEW_URL, narratorPreviewPayload());
+  if (!audioUrl) return;
+  previewAudio.src = `${audioUrl}?t=${Date.now()}`;
   await previewAudio.play();
 }
 
+async function downloadNarrator() {
+  const audioUrl = await renderPreview(NARRATOR_PREVIEW_URL, narratorPreviewPayload());
+  if (!audioUrl) return;
+  downloadAudio(audioUrl, "narrator-preview");
+}
+
 document.querySelector('.preview-btn[data-char-id="narrator"]').onclick = previewNarrator;
+document.getElementById("narrator-download-btn").onclick = downloadNarrator;
 
 initNarratorControls();
 
@@ -427,6 +476,7 @@ loadCharacters();
 
 window.saveChar = saveChar;
 window.previewChar = previewChar;
+window.downloadChar = downloadChar;
 window.uploadRef = uploadRef;
 window.removeRef = removeRef;
 window.uploadNarratorRef = uploadNarratorRef;
