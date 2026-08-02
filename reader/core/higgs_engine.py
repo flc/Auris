@@ -33,6 +33,8 @@ from core.pronunciation import apply_pronunciation, lexicon_version
 from core.tts_engine import (
     AUDIO_CACHE_DIR,
     SAMPLE_RATE,
+    variant_cache_tag,
+    variant_seed,
     _audio_zcr,
     _voice_design_ref_language,
     _voice_design_ref_text,
@@ -162,6 +164,7 @@ class HiggsTTSEngine:
     engine_name = "higgs"
     # Higgs picks the speaker while it decodes, so it needs the same pinning.
     uses_voice_lock = True
+    supports_variants = True
 
     def __init__(self, model_path: str = "", worker_label: str = "primary"):
         self.model_path = model_path
@@ -489,6 +492,7 @@ class HiggsTTSEngine:
         normalize_text: bool = False,
         num_step: int = 0,
         lexicon: str | None = None,
+        variant: int = 0,
     ) -> str:
         controls = (
             _setting("higgs_prompt_mode", "raw"),
@@ -507,6 +511,7 @@ class HiggsTTSEngine:
             f"higgs-v{HIGGS_CACHE_VERSION}|{text}|{instruct}|{ref_audio}|{ref_text}|{speed:.3f}|"
             f"{language or ''}|nt={int(bool(normalize_text))}|{controls}|{generation}|"
             f"lex={lexicon_version(lexicon)}{quantization_tag}"
+            f"{variant_cache_tag(variant)}"
         )
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
@@ -827,6 +832,8 @@ class HiggsTTSEngine:
         language: str | None = None,
         normalize_text: bool | None = None,
         lexicon: str | None = None,
+        speaker: str | None = None,
+        variant: int = 0,
     ) -> dict:
         if normalize_text is None:
             normalize_text = bool(_setting("normalize_text", True))
@@ -840,6 +847,7 @@ class HiggsTTSEngine:
             language=language,
             normalize_text=bool(normalize_text),
             lexicon=lexicon,
+            variant=variant,
         )
         path = self.cache_path(key)
         if os.path.exists(path):
@@ -850,8 +858,14 @@ class HiggsTTSEngine:
                 "cache_hit": True,
                 "cache_key": key,
             }
+        # A configured fixed seed would hand back the same take every time, so
+        # alternatives derive their own. Variant 0 keeps the configured seed.
+        seed = None
+        if variant:
+            seed = variant_seed(int(self._generation_settings()["seed"]), variant)
         audio = self._synthesize(
             text, instruct, ref_audio, ref_text, speed, language, bool(normalize_text),
+            seed=seed,
             lexicon=lexicon,
         )
         sample_rate = self._sample_rate

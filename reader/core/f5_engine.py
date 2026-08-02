@@ -37,6 +37,8 @@ from core.tts_engine import (
     AUDIO_CACHE_DIR,
     _write_audio_atomic,
     apply_text_normalization,
+    variant_cache_tag,
+    variant_seed,
 )
 
 log = logging.getLogger(__name__)
@@ -159,6 +161,7 @@ class F5TTSEngine:
     # F5 clones only: the mandatory reference clip already fixes the voice, so
     # there is no designed voice to pin and narrator_voice_lock is never read.
     uses_voice_lock = False
+    supports_variants = True
 
     def __init__(self, model_path: str = "", worker_label: str = "primary"):
         self.model_path = model_path
@@ -452,6 +455,7 @@ class F5TTSEngine:
         normalize_text: bool = False,
         num_step: int = 0,
         lexicon: str | None = None,
+        variant: int = 0,
     ) -> str:
         checkpoint = (
             _setting("f5_model_repo", DEFAULT_MODEL_REPO),
@@ -463,7 +467,7 @@ class F5TTSEngine:
             f"{language or ''}|nt={int(bool(normalize_text))}|{checkpoint}|"
             f"{cls._generation_settings()}|seed={_setting('f5_seed', -1)}|"
             f"trim={int(bool(_setting('f5_trim_onset', True)))}|"
-            f"lex={lexicon_version(lexicon)}"
+            f"lex={lexicon_version(lexicon)}{variant_cache_tag(variant)}"
         )
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
@@ -496,6 +500,7 @@ class F5TTSEngine:
         language: str | None,
         normalize_text: bool,
         lexicon: str | None = None,
+        seed: int | None = None,
     ) -> np.ndarray:
         if not self._ready or self.model is None:
             raise RuntimeError("F5-TTS is not loaded. " + (self._error or "Load it first."))
@@ -512,7 +517,8 @@ class F5TTSEngine:
             return np.zeros(0, dtype=np.float32)
 
         settings = self._generation_settings()
-        seed = int(_setting("f5_seed", -1))
+        if seed is None:
+            seed = int(_setting("f5_seed", -1))
 
         self._generating.set()
         try:
@@ -573,6 +579,8 @@ class F5TTSEngine:
         language: str | None = None,
         normalize_text: bool | None = None,
         lexicon: str | None = None,
+        speaker: str | None = None,
+        variant: int = 0,
     ) -> dict:
         if normalize_text is None:
             normalize_text = bool(_setting("normalize_text", True))
@@ -586,6 +594,7 @@ class F5TTSEngine:
             language=language,
             normalize_text=bool(normalize_text),
             lexicon=lexicon,
+            variant=variant,
         )
         path = self.cache_path(key)
         if os.path.exists(path):
@@ -596,9 +605,13 @@ class F5TTSEngine:
                 "cache_hit": True,
                 "cache_key": key,
             }
+        # A configured fixed seed would return the same take every time, so
+        # alternatives derive their own. Variant 0 keeps the configured seed.
+        seed = variant_seed(int(_setting("f5_seed", -1)), variant) if variant else None
         audio = self._synthesize(
             text, instruct, ref_audio, ref_text, speed, language, bool(normalize_text),
             lexicon=lexicon,
+            seed=seed,
         )
         _write_audio_atomic(path, audio, self._sample_rate)
         return {

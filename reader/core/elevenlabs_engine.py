@@ -35,6 +35,8 @@ from core.tts_engine import (
     SAMPLE_RATE,
     _write_audio_atomic,
     apply_text_normalization,
+    variant_cache_tag,
+    variant_seed,
 )
 
 log = logging.getLogger(__name__)
@@ -61,7 +63,7 @@ SUPPORTED_OUTPUT_FORMATS = (
 
 # The per-request speed control and language_code are model dependent. When the
 # API rejects a request because of them, the call is retried without them.
-_OPTIONAL_PAYLOAD_FIELDS = ("language_code", "voice_settings.speed")
+_OPTIONAL_PAYLOAD_FIELDS = ("language_code", "voice_settings.speed", "seed")
 _SPEED_RANGE = (0.7, 1.2)
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 _MAX_ATTEMPTS = 4
@@ -161,6 +163,9 @@ class ElevenLabsTTSEngine:
     # A voice id is already a stable identity on the provider's side, so there
     # is nothing to pin and narrator_voice_lock is never read.
     uses_voice_lock = False
+    # The API takes a seed, so alternative takes are reproducible — and, being
+    # a metered engine, each one is billed like any other segment.
+    supports_variants = True
 
     def __init__(self, model_path: str = "", worker_label: str = "primary"):
         # model_path/worker_label exist only so the engine stays interchangeable
@@ -445,6 +450,7 @@ class ElevenLabsTTSEngine:
         normalize_text: bool = False,
         num_step: int = 0,
         lexicon: str | None = None,
+        variant: int = 0,
     ) -> str:
         # instruct/ref_audio are intentionally absent: they do not reach the API
         # yet, and keying on them would pay for the same audio once per
@@ -455,7 +461,7 @@ class ElevenLabsTTSEngine:
             f"elevenlabs-v{ELEVENLABS_CACHE_VERSION}|{text}|{voice_id}|{model_id}|"
             f"{cls._voice_settings()}|{speed:.3f}|{language or ''}|"
             f"nt={int(bool(normalize_text))}|{_output_format()}|"
-            f"lex={lexicon_version(lexicon)}"
+            f"lex={lexicon_version(lexicon)}{variant_cache_tag(variant)}"
         )
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
@@ -485,6 +491,7 @@ class ElevenLabsTTSEngine:
         language: str | None,
         normalize_text: bool,
         lexicon: str | None = None,
+        variant: int = 0,
     ) -> tuple[np.ndarray, int]:
         if not self._ready:
             raise RuntimeError(
@@ -505,6 +512,10 @@ class ElevenLabsTTSEngine:
         payload: dict = {"text": spoken, "model_id": model_id, "voice_settings": voice_settings}
         if language and _sends_language_code(model_id):
             payload["language_code"] = str(language).strip().lower()[:2]
+        if variant:
+            # Pinning the seed makes an alternative take reproducible, so the
+            # same variant does not have to be paid for twice.
+            payload["seed"] = variant_seed(0, variant)
 
         output_format = _output_format()
         self._generating.set()
@@ -529,6 +540,8 @@ class ElevenLabsTTSEngine:
         language: str | None = None,
         normalize_text: bool | None = None,
         lexicon: str | None = None,
+        speaker: str | None = None,
+        variant: int = 0,
     ) -> dict:
         if normalize_text is None:
             normalize_text = bool(_setting("normalize_text", True))
@@ -541,6 +554,7 @@ class ElevenLabsTTSEngine:
             language=language,
             normalize_text=bool(normalize_text),
             lexicon=lexicon,
+            variant=variant,
         )
         path = self.cache_path(key)
         if os.path.exists(path):
@@ -559,6 +573,7 @@ class ElevenLabsTTSEngine:
             language,
             bool(normalize_text),
             lexicon=lexicon,
+            variant=variant,
         )
         _write_audio_atomic(path, audio, rate)
         return {

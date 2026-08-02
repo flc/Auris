@@ -998,6 +998,18 @@ code {
 }
 .export-section label { display: block; font-size: 0.83rem; margin: 4px 0; cursor: pointer; color: var(--text2); }
 .export-section label:hover { color: var(--text); }
+.takes-sentence {
+  display: block; color: var(--text2); font-size: 0.78rem;
+  font-style: italic; line-height: 1.4;
+}
+.take-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 0; font-size: 0.8rem; color: var(--text2);
+}
+.take-row-active { color: var(--text); }
+.take-name { flex: 1; }
+.take-len { font-family: 'Courier New', monospace; font-size: 0.72rem; color: var(--text3); }
+#takes-hint { display: block; margin-top: 8px; color: var(--text3); font-size: 0.72rem; line-height: 1.4; }
 .chapter-selection { margin: 8px 0 0 20px; }
 .chapter-selection label { margin-bottom: 3px; }
 .chapter-selection input {

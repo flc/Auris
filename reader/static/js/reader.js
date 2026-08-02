@@ -1418,6 +1418,138 @@ document.getElementById('export-btn').onclick = () => {
   document.getElementById('export-dropdown').classList.toggle('hidden');
 };
 
+// ── Alternative takes ────────────────────────────────────────────────────────
+// A model occasionally swallows a word or lands the stress wrongly. Rather than
+// re-rendering a chapter and hoping for better luck, ask this one sentence for
+// another reading and keep whichever is best.
+
+let _takesAudio = null;
+const _takeCacheKeys = new Map();
+
+function renderTakes(data) {
+  _takeCacheKeys.clear();
+  (data.variants || []).forEach(take => _takeCacheKeys.set(take.variant, take.cache_key));
+
+  const list = document.getElementById('takes-list');
+  const generate = document.getElementById('takes-generate');
+  const hint = document.getElementById('takes-hint');
+
+  if (data.supported === false) {
+    list.innerHTML = '<small>This engine always reads a sentence the same way.</small>';
+    generate.disabled = true;
+    return;
+  }
+  generate.disabled = false;
+
+  const takes = data.variants || [];
+  if (!takes.length) {
+    list.innerHTML = '<small>No takes yet. Generate a couple and compare.</small>';
+    return;
+  }
+  const selected = Number(data.selected_variant || 0);
+  list.innerHTML = takes.map(take => {
+    const active = take.variant === selected;
+    const label = take.variant === 0 ? 'Take 1 (original)' : `Take ${take.variant + 1}`;
+    const seconds = take.duration_sec ? `${take.duration_sec.toFixed(1)}s` : '';
+    return `
+      <div class="take-row${active ? ' take-row-active' : ''}">
+        <span class="take-name">${active ? '&#10003; ' : ''}${label}</span>
+        <span class="take-len">${seconds}</span>
+        <button class="btn btn-sm btn-ghost" onclick="playTake(${take.variant})">&#9654;</button>
+        <button class="btn btn-sm btn-ghost" onclick="selectTake(${take.variant})"
+                ${active ? 'disabled' : ''}>Keep</button>
+      </div>`;
+  }).join('');
+  if (takes.length >= (data.max_variants ?? 5) + 1) {
+    generate.disabled = true;
+    hint.textContent = 'That is every take this sentence can hold.';
+  }
+}
+
+async function loadTakes() {
+  const list = document.getElementById('takes-list');
+  if (!currentChapterId) {
+    list.innerHTML = '<small>Open a chapter first.</small>';
+    return;
+  }
+  list.innerHTML = '<small>Loading…</small>';
+  document.getElementById('takes-sentence').textContent =
+    segments[currentSegIdx]?.text?.slice(0, 160) || '';
+  try {
+    const r = await fetch(
+      `/api/tts/variants/${BOOK_ID}/${currentChapterId}/${currentSegIdx}`
+    );
+    renderTakes(await r.json());
+  } catch (e) {
+    list.innerHTML = `<small>Could not load takes: ${esc(e.message)}</small>`;
+  }
+}
+
+async function generateTakes() {
+  const button = document.getElementById('takes-generate');
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Generating…';
+  try {
+    const r = await fetch(
+      `/api/tts/variants/${BOOK_ID}/${currentChapterId}/${currentSegIdx}`,
+      {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ count: 2 }),
+      }
+    );
+    const data = await r.json();
+    if (!r.ok) { showToast(data.error || 'Could not generate takes'); return; }
+    renderTakes(data);
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function playTake(variant) {
+  const cacheKey = _takeCacheKeys.get(variant);
+  if (!cacheKey) return;
+  // Auditioning must not fight with the reader's own playback.
+  stopPlayback();
+  if (!_takesAudio) _takesAudio = new Audio();
+  _takesAudio.pause();
+  _takesAudio.src = `/api/audio/${cacheKey}?t=${Date.now()}`;
+  _takesAudio.play().catch(() => showToast('That take is no longer on disk.'));
+}
+
+async function selectTake(variant) {
+  const r = await fetch(
+    `/api/tts/variants/${BOOK_ID}/${currentChapterId}/${currentSegIdx}/select`,
+    {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ variant }),
+    }
+  );
+  const data = await r.json();
+  if (!r.ok) { showToast(data.error || 'Could not keep that take'); return; }
+  // The segment now points at different audio, so anything already buffered
+  // for it is stale.
+  _segCache.delete(currentSegIdx);
+  if (_preloadIdx === currentSegIdx) { _preloadIdx = -1; _preloadData = null; }
+  if (segments[currentSegIdx]) {
+    segments[currentSegIdx].selected_variant = variant;
+  }
+  renderTakes(data);
+  showToast(`Keeping take ${variant + 1}`);
+}
+
+document.getElementById('takes-btn').onclick = () => {
+  const panel = document.getElementById('takes-dropdown');
+  panel.classList.toggle('hidden');
+  if (!panel.classList.contains('hidden')) loadTakes();
+};
+document.getElementById('takes-generate').onclick = generateTakes;
+window.playTake = playTake;
+window.selectTake = selectTake;
+
 document.querySelectorAll('input[name="exp-mode"]').forEach(input => {
   input.addEventListener('change', () => {
     const selected = document.querySelector('input[name="exp-mode"]:checked').value;

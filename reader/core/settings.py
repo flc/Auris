@@ -157,6 +157,12 @@ DEFAULTS: dict = {
     # narrator instruction and clones it for every segment afterwards.
     'narrator_voice_lock': True,
 
+    # After generating a chapter, re-render segments whose audio is too short
+    # for their text — the signature of an engine swallowing a few words. The
+    # expected pace is the chapter's own median, so nothing is hardcoded per
+    # language or engine. Only costs time on the segments that look broken.
+    'tts_retry_suspect_segments': True,
+
     # Pronunciation lexicon applied to the text sent to the model, never to
     # the text on screen. One "source = spoken form" rule per line; the stem
     # matches with any suffix attached ("Westerosban"). Mainly for foreign

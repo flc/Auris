@@ -226,10 +226,13 @@ async function loadSettings() {
   }
   document.getElementById('audio-format').value    = _settings.audio_format    || 'wav';
   document.getElementById('subtitle-format').value = _settings.subtitle_format || 'ass';
+  document.getElementById('tts-retry-suspect-segments').checked =
+    _settings.tts_retry_suspect_segments !== false;
   document.getElementById('audio-mastering').checked =
     _settings.audio_mastering !== false;
 
   refreshAccelStatus();
+  refreshCacheUsage();
   if (engine === 'elevenlabs' || engine === 'higgs') {
     fetch('/api/tts/status')
       .then(r => r.json())
@@ -655,6 +658,66 @@ function refreshElevenLabsStatus(st) {
   el.className = 'status-hint status-ok';
 }
 
+// ── Audio cache ───────────────────────────────────────────────────────────────
+
+function formatBytes(bytes) {
+  if (!bytes) return '0 MB';
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
+}
+
+async function refreshCacheUsage() {
+  const rendered = document.getElementById('cache-rendered');
+  const voices = document.getElementById('cache-voices');
+  if (!rendered || !voices) return;
+  try {
+    const u = await fetch('/api/settings/audio-cache').then(r => r.json());
+    rendered.textContent =
+      `${u.rendered_files} file${u.rendered_files === 1 ? '' : 's'} · ${formatBytes(u.rendered_bytes)}`;
+    voices.textContent =
+      `${u.voice_files} file${u.voice_files === 1 ? '' : 's'} · ${formatBytes(u.voice_bytes)}`;
+  } catch (_) {
+    rendered.textContent = voices.textContent = 'unavailable';
+  }
+}
+
+async function clearAudioCache(includeVoices) {
+  const usage = await fetch('/api/settings/audio-cache').then(r => r.json());
+  const size = formatBytes(
+    usage.rendered_bytes + (includeVoices ? usage.voice_bytes : 0)
+  );
+  const question = includeVoices
+    ? `Delete all cached audio (${size}), including the locked voice samples?\n\n` +
+      'Narrators described only by text will be re-designed and will sound different.'
+    : `Delete ${usage.rendered_files} rendered sentence${usage.rendered_files === 1 ? '' : 's'} (${size})?\n\n` +
+      'Voices are unaffected; playback re-renders as you go.';
+  if (!confirm(question)) return;
+
+  const hint = document.getElementById('clear-cache-hint');
+  hint.textContent = 'Deleting…';
+  hint.className = 'status-hint status-warn';
+  const r = await fetch(
+    `/api/settings/audio-cache?include_voices=${includeVoices ? 1 : 0}`,
+    { method: 'DELETE' }
+  );
+  const d = await r.json();
+  if (!r.ok) {
+    hint.textContent = d.error || 'Could not clear the cache.';
+    hint.className = 'status-hint status-error';
+    return;
+  }
+  hint.textContent = `Freed ${formatBytes(d.freed_bytes)}.`;
+  hint.className = 'status-hint status-ok';
+  refreshCacheUsage();
+}
+
+document.getElementById('clear-cache-btn')?.addEventListener(
+  'click', () => clearAudioCache(false)
+);
+document.getElementById('clear-voices-btn')?.addEventListener(
+  'click', () => clearAudioCache(true)
+);
+
 // ── spaCy ─────────────────────────────────────────────────────────────────────
 
 async function checkSpacy() {
@@ -798,6 +861,8 @@ async function saveSettings() {
     audio_format:      document.getElementById('audio-format').value,
     subtitle_format:   document.getElementById('subtitle-format').value,
     audio_mastering:   document.getElementById('audio-mastering').checked,
+    tts_retry_suspect_segments:
+      document.getElementById('tts-retry-suspect-segments').checked,
     theme:             document.getElementById('theme-select').value,
     font_family:       document.getElementById('font-family').value,
     font_size:         parseInt(document.getElementById('font-size').value) || 18,

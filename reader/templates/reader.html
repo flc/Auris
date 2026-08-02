@@ -157,6 +157,24 @@
     <input id="speed-slider" type="range" min="0.5" max="2.0" step="0.1" value="1.0" class="pb-slider">
     <span id="speed-val" style="font-size:.75rem;color:var(--text2);font-family:'Courier New',monospace">1.0&#215;</span>
     <div class="export-menu-wrap">
+      <button class="btn btn-sm btn-ghost" id="takes-btn"
+              title="Hear other readings of the current sentence">&#128257; Takes</button>
+      <div class="export-dropdown hidden" id="takes-dropdown">
+        <div class="export-dropdown-title">Alternative takes</div>
+        <div class="export-section">
+          <small id="takes-sentence" class="takes-sentence"></small>
+        </div>
+        <div class="export-section" id="takes-list"></div>
+        <div class="export-section">
+          <button class="btn btn-sm btn-primary" id="takes-generate">Generate 2 more</button>
+          <small id="takes-hint">
+            Each take is a fresh synthesis of this one sentence. The one you keep
+            is what playback and export use.
+          </small>
+        </div>
+      </div>
+    </div>
+    <div class="export-menu-wrap">
       <button class="btn btn-sm btn-ghost" id="export-btn">&#8595; Export</button>
       <div class="export-dropdown hidden" id="export-dropdown">
         <div class="export-dropdown-title">Export Audio</div>

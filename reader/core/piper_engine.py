@@ -40,6 +40,7 @@ from core.tts_engine import (
     SAMPLE_RATE,
     _write_audio_atomic,
     apply_text_normalization,
+    variant_cache_tag,
 )
 
 log = logging.getLogger(__name__)
@@ -120,6 +121,9 @@ class PiperTTSEngine:
     # The voice is the model file. There is no designed voice to pin, so the
     # narrator voice lock never applies.
     uses_voice_lock = False
+    # VITS samples its duration and acoustic noise per call, so repeat calls
+    # already differ; only the cache key has to separate the takes.
+    supports_variants = True
 
     def __init__(self, model_path: str = "", worker_label: str = "primary"):
         self.model_path = model_path
@@ -385,6 +389,7 @@ class PiperTTSEngine:
         num_step: int = 0,
         lexicon: str | None = None,
         speaker: str | None = None,
+        variant: int = 0,
     ) -> str:
         # The voice, not the instruct, is what actually changes the audio — but
         # the instruct feeds gender-matched casting, so both belong in the key.
@@ -392,7 +397,7 @@ class PiperTTSEngine:
         payload = (
             f"piper-v{PIPER_CACHE_VERSION}|{text}|{voice}|{speed:.3f}|{language or ''}|"
             f"nt={int(bool(normalize_text))}|{cls._synthesis_settings()}|"
-            f"lex={lexicon_version(lexicon)}"
+            f"lex={lexicon_version(lexicon)}{variant_cache_tag(variant)}"
         )
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
@@ -478,6 +483,7 @@ class PiperTTSEngine:
         normalize_text: bool | None = None,
         lexicon: str | None = None,
         speaker: str | None = None,
+        variant: int = 0,
     ) -> dict:
         if normalize_text is None:
             normalize_text = bool(_setting("normalize_text", True))
@@ -498,6 +504,7 @@ class PiperTTSEngine:
             normalize_text=bool(normalize_text),
             lexicon=lexicon,
             speaker=speaker,
+            variant=variant,
         )
         path = self.cache_path(key)
         if os.path.exists(path):

@@ -815,6 +815,20 @@
       </span>
     </div>
     <div class="setting-row">
+      <label class="checkbox-label">
+        <input type="checkbox" id="tts-retry-suspect-segments">
+        Re-render sentences that came out too short
+      </label>
+      <span class="muted" style="font-size:.78rem">
+        Every engine occasionally swallows the last few words of a sentence.
+        After a chapter is generated, Auris compares each sentence against the
+        chapter's own median speech rate — nothing is hardcoded per language or
+        voice — and re-renders the outliers, keeping the take that speaks the
+        whole line. Only the suspect sentences cost extra time, and the rejected
+        takes stay available under Takes in the reader.
+      </span>
+    </div>
+    <div class="setting-row">
       <label>Audio format</label>
       <select id="audio-format" class="select-input">
         <option value="wav">WAV — lossless, always available</option>
@@ -827,6 +841,46 @@
         <option value="ass">ASS — styled, per-character colours</option>
         <option value="srt">SRT — plain, universally supported</option>
       </select>
+    </div>
+  </section>
+
+  <!-- Audio cache -->
+  <section class="settings-section">
+    <div class="settings-section-title">Audio Cache</div>
+    <p class="section-desc">
+      Every generated sentence is kept as a WAV so replaying or re-exporting a
+      chapter costs nothing. A long book adds up.
+    </p>
+    <div class="setting-row">
+      <label>Rendered speech</label>
+      <span id="cache-rendered" class="status-hint">—</span>
+      <span class="muted" style="font-size:.78rem">
+        Safe to delete: the next playback re-renders it with the same voices.
+        Any alternative takes you kept go with it, and on a metered cloud engine
+        re-rendering is billed again.
+      </span>
+      <div class="setting-row" style="margin-top:8px">
+        <button class="btn btn-ghost btn-sm" id="clear-cache-btn" type="button">
+          Delete rendered speech
+        </button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label>Locked voice samples</label>
+      <span id="cache-voices" class="status-hint">—</span>
+      <span class="muted" style="font-size:.78rem">
+        <strong>Not the same thing.</strong> A narrator described only by text is
+        pinned to one generated clip, which is then cloned for every sentence.
+        Delete it and the next render designs a <em>different</em> narrator — your
+        books will not sound the way they did. Only useful when you deliberately
+        want a new voice from the same description.
+      </span>
+      <div class="setting-row" style="margin-top:8px">
+        <button class="btn btn-ghost btn-sm" id="clear-voices-btn" type="button">
+          Delete everything including voice samples
+        </button>
+        <span id="clear-cache-hint" class="status-hint"></span>
+      </div>
     </div>
   </section>
 

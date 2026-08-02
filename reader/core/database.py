@@ -113,6 +113,20 @@ def init_db():
             ends_paragraph INTEGER DEFAULT 0
         );
 
+        -- Alternative takes of one segment, kept so a listener can pick the
+        -- reading they prefer. The chosen take is copied into tts_segments, so
+        -- playback, export and subtitles never have to know about this table.
+        CREATE TABLE IF NOT EXISTS tts_segment_variants (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            segment_id    INTEGER NOT NULL REFERENCES tts_segments(id) ON DELETE CASCADE,
+            variant       INTEGER NOT NULL,
+            cache_key     TEXT NOT NULL,
+            audio_path    TEXT,
+            duration_sec  REAL,
+            created_at    TEXT DEFAULT (datetime('now')),
+            UNIQUE(segment_id, variant)
+        );
+
         CREATE TABLE IF NOT EXISTS bookmarks (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             book_id       INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
@@ -245,4 +259,11 @@ def init_db():
             conn.execute(
                 "ALTER TABLE tts_segments "
                 "ADD COLUMN ends_paragraph INTEGER DEFAULT 0"
+            )
+        # Added after the rebuild above, which recreates tts_segments without
+        # any column it does not know about.
+        if "selected_variant" not in segment_cols:
+            conn.execute(
+                "ALTER TABLE tts_segments "
+                "ADD COLUMN selected_variant INTEGER DEFAULT 0"
             )

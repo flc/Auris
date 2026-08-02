@@ -14,6 +14,7 @@ from flask import (
     send_file,
 )
 
+from core import audio_check
 from core.database import init_db, get_conn
 from core import pronunciation
 from core.pronunciation import combine_lexicons
@@ -1461,6 +1462,34 @@ def tts_cancel():
     return jsonify({'ok': True, 'cancel_requested': tts.cancel()})
 
 
+def _segment_tts_item(book_id: int, seg: dict, language: str | None) -> dict:
+    """Everything an engine needs to synthesize one stored segment."""
+    if seg['character_name']:
+        with get_conn() as conn:
+            char = conn.execute(
+                'SELECT * FROM characters WHERE book_id=? AND name=?',
+                (book_id, seg['character_name'])
+            ).fetchone()
+        char_data = dict(char) if char else {}
+        ref_audio = char_data.get('ref_audio_path') or None
+        ref_text = (char_data.get('ref_text') or None) if ref_audio else None
+    else:
+        ref_audio, ref_text = _book_narrator_reference(book_id)
+
+    return {
+        'text': seg['enriched_text'],
+        'instruct': seg['instruct'],
+        'ref_audio': ref_audio,
+        'ref_text': ref_text,
+        'speed': seg['speed'],
+        'language': language,
+        'lexicon': _book_pronunciation(book_id),
+        # None for narration. Engines that cannot clone use it to cast a
+        # distinct voice per character; the others ignore it.
+        'speaker': seg['character_name'] or None,
+    }
+
+
 @app.route('/api/tts/generate', methods=['POST'])
 def tts_generate():
     body = request.get_json(force=True)
@@ -1522,30 +1551,9 @@ def tts_generate():
             'export_busy': True,
         }), 503
 
-    if seg['character_name']:
-        with get_conn() as conn:
-            char = conn.execute(
-                'SELECT * FROM characters WHERE book_id=? AND name=?',
-                (book_id, seg['character_name'])
-            ).fetchone()
-        char_data = dict(char) if char else {}
-        ref_audio = char_data.get('ref_audio_path') or None
-        ref_text = (char_data.get('ref_text') or None) if ref_audio else None
-    else:
-        ref_audio, ref_text = _book_narrator_reference(book_id)
-
-    item = {
-        'text': seg['enriched_text'],
-        'instruct': seg['instruct'],
-        'ref_audio': ref_audio,
-        'ref_text': ref_text,
-        'speed': seg['speed'],
-        'language': language,
-        'lexicon': _book_pronunciation(book_id),
-        # None for narration. Engines that cannot clone use it to cast a
-        # distinct voice per character; the others ignore it.
-        'speaker': seg['character_name'] or None,
-    }
+    item = _segment_tts_item(book_id, seg, language)
+    ref_audio = item['ref_audio']
+    ref_text = item['ref_text']
     request_key = (
         seg['id'],
         seg['enriched_text'],
@@ -1576,6 +1584,195 @@ def tts_generate():
         'segment_index': segment_index,
         'cached': result['cache_hit'],
     })
+
+
+# ── Alternative takes ────────────────────────────────────────────────────────
+# A generated reading is a sample, not a fact: a model occasionally swallows a
+# word or lands the stress wrongly. Rather than re-rendering a whole book in
+# the hope of better luck, a listener can ask this one sentence for a couple of
+# alternatives and keep the one that reads best.
+
+MAX_SEGMENT_VARIANTS = 5
+
+
+def _active_engine_supports_variants() -> bool:
+    return bool(getattr(tts, 'supports_variants', False))
+
+
+def _load_segment(book_id: int, chapter_id: int, segment_index: int):
+    with get_conn() as conn:
+        seg = conn.execute(
+            'SELECT * FROM tts_segments '
+            'WHERE book_id=? AND chapter_id=? AND segment_index=?',
+            (book_id, chapter_id, segment_index),
+        ).fetchone()
+        book = conn.execute(
+            'SELECT language FROM books WHERE id=?', (book_id,)
+        ).fetchone()
+    if not seg:
+        return None, None
+    language = book['language'] if book and book['language'] else None
+    return dict(seg), language
+
+
+def _segment_variants(segment_id: int) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            'SELECT variant, cache_key, duration_sec, audio_path '
+            'FROM tts_segment_variants WHERE segment_id=? ORDER BY variant',
+            (segment_id,),
+        ).fetchall()
+    return [
+        {
+            'variant': row['variant'],
+            'cache_key': row['cache_key'],
+            'duration_sec': row['duration_sec'],
+            'audio_url': f'/api/audio/{row["cache_key"]}',
+            'available': bool(row['audio_path'] and os.path.exists(row['audio_path'])),
+        }
+        for row in rows
+    ]
+
+
+def _record_variant(segment_id: int, variant: int, result: dict) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            'INSERT INTO tts_segment_variants '
+            '(segment_id, variant, cache_key, audio_path, duration_sec) '
+            'VALUES (?, ?, ?, ?, ?) '
+            'ON CONFLICT(segment_id, variant) DO UPDATE SET '
+            'cache_key=excluded.cache_key, audio_path=excluded.audio_path, '
+            'duration_sec=excluded.duration_sec',
+            (
+                segment_id,
+                variant,
+                result['cache_key'],
+                result['audio_path'],
+                result['duration_sec'],
+            ),
+        )
+
+
+def _variants_payload(seg: dict) -> dict:
+    return {
+        'segment_index': seg['segment_index'],
+        'selected_variant': int(seg.get('selected_variant') or 0),
+        'variants': _segment_variants(seg['id']),
+    }
+
+
+@app.route(
+    '/api/tts/variants/<int:book_id>/<int:chapter_id>/<int:segment_index>'
+)
+def list_segment_variants(book_id, chapter_id, segment_index):
+    seg, _language = _load_segment(book_id, chapter_id, segment_index)
+    if not seg:
+        return jsonify({'error': 'Segment not found'}), 404
+    return jsonify({
+        **_variants_payload(seg),
+        'supported': _active_engine_supports_variants(),
+        'max_variants': MAX_SEGMENT_VARIANTS,
+    })
+
+
+@app.route(
+    '/api/tts/variants/<int:book_id>/<int:chapter_id>/<int:segment_index>',
+    methods=['POST'],
+)
+def generate_segment_variants(book_id, chapter_id, segment_index):
+    body = request.get_json(silent=True) or {}
+    try:
+        count = max(1, min(int(body.get('count', 2)), MAX_SEGMENT_VARIANTS))
+    except (TypeError, ValueError):
+        count = 2
+
+    if not _active_engine_supports_variants():
+        return jsonify({
+            'error': f'The {tts.engine_name} engine cannot vary its output.',
+        }), 400
+
+    status = tts.status()
+    if status['state'] != 'ready':
+        return jsonify({'error': 'Model not ready', 'status': status}), 503
+    if _export_exclusive_active():
+        return jsonify({
+            'error': 'Export in progress — alternatives are paused until it finishes.',
+            'export_busy': True,
+        }), 503
+
+    seg, language = _load_segment(book_id, chapter_id, segment_index)
+    if not seg:
+        return jsonify({'error': 'Segment not found'}), 404
+
+    item = _segment_tts_item(book_id, seg, language)
+    existing = {v['variant'] for v in _segment_variants(seg['id'])}
+
+    # The take already on the segment is variant 0, and it is what the listener
+    # just heard. Registering it keeps the comparison honest.
+    if 0 not in existing and seg.get('audio_path') and seg.get('cache_key'):
+        _record_variant(seg['id'], 0, {
+            'cache_key': seg['cache_key'],
+            'audio_path': seg['audio_path'],
+            'duration_sec': seg['duration_sec'],
+        })
+        existing.add(0)
+
+    wanted = [n for n in range(0, MAX_SEGMENT_VARIANTS + 1) if n not in existing][:count]
+    try:
+        for variant in wanted:
+            result = tts.generate(
+                text=item['text'],
+                instruct=item['instruct'],
+                ref_audio=item['ref_audio'],
+                ref_text=item['ref_text'],
+                speed=item['speed'],
+                language=item['language'],
+                lexicon=item['lexicon'],
+                speaker=item['speaker'],
+                variant=variant,
+            )
+            _record_variant(seg['id'], variant, result)
+    except Exception as exc:
+        log.warning('Variant generation failed for segment %s: %s', seg['id'], exc)
+        return jsonify({'error': str(exc)}), 500
+
+    seg, _ = _load_segment(book_id, chapter_id, segment_index)
+    return jsonify(_variants_payload(seg))
+
+
+@app.route(
+    '/api/tts/variants/<int:book_id>/<int:chapter_id>/<int:segment_index>/select',
+    methods=['POST'],
+)
+def select_segment_variant(book_id, chapter_id, segment_index):
+    body = request.get_json(silent=True) or {}
+    try:
+        variant = int(body.get('variant'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'A variant index is required'}), 400
+
+    seg, _language = _load_segment(book_id, chapter_id, segment_index)
+    if not seg:
+        return jsonify({'error': 'Segment not found'}), 404
+
+    with get_conn() as conn:
+        row = conn.execute(
+            'SELECT cache_key, audio_path, duration_sec FROM tts_segment_variants '
+            'WHERE segment_id=? AND variant=?',
+            (seg['id'], variant),
+        ).fetchone()
+        if not row:
+            return jsonify({'error': 'That take has not been generated'}), 404
+        # Copying the chosen take onto the segment is what makes playback,
+        # export and subtitle timing pick it up without knowing about takes.
+        conn.execute(
+            'UPDATE tts_segments SET audio_path=?, duration_sec=?, cache_key=?, '
+            'selected_variant=? WHERE id=?',
+            (row['audio_path'], row['duration_sec'], row['cache_key'], variant, seg['id']),
+        )
+
+    seg, _ = _load_segment(book_id, chapter_id, segment_index)
+    return jsonify({'ok': True, **_variants_payload(seg)})
 
 
 @app.route('/api/tts/segments/<int:book_id>/<int:chapter_id>')
@@ -1612,6 +1809,7 @@ def get_segments(book_id, chapter_id):
         'has_audio': bool(r['audio_path'] and os.path.exists(r['audio_path'])),
         'duration_sec': r['duration_sec'],
         'cache_key': r['cache_key'],
+        'selected_variant': int(r['selected_variant'] or 0),
         'unit_index': r['unit_index'],
         'speaker_candidate': bool(r['speaker_candidate']),
         'speaker_source': annotation_sources.get(r['unit_index']),
@@ -1918,6 +2116,128 @@ def _ensure_audio_for_chapter(
 
     with result_lock:
         _flush_db(force=True)
+
+    _retry_suspect_segments(book_id, chapter_id, segs, job, language, chars,
+                            narrator_ref, narrator_ref_text, lexicon)
+
+
+# Attempts per suspect segment. Each is a full re-synthesis of one sentence, so
+# this trades a little time for the sentences most likely to be broken.
+SUSPECT_RETRY_ATTEMPTS = 2
+
+
+def _retry_suspect_segments(
+    book_id: int,
+    chapter_id: int,
+    segs: list[dict],
+    job: dict | None,
+    language: str | None,
+    chars: dict,
+    narrator_ref: str | None,
+    narrator_ref_text: str | None,
+    lexicon: str,
+) -> None:
+    """Re-render segments whose audio is too short for their text.
+
+    Detection is objective — words went missing — so this needs no listener.
+    Re-rendering goes through the same variant mechanism the reader's takes
+    panel uses, which means a retry gets its own cache entry instead of being
+    handed back the identical file, and the rejected takes stay auditionable.
+    """
+    if not bool(app_settings.get('tts_retry_suspect_segments', True)):
+        return
+    if not getattr(tts, 'supports_variants', False):
+        return
+
+    suspects = audio_check.find_suspects(segs)
+    if not suspects:
+        return
+
+    median = audio_check.median_speech_rate(segs)
+    log.info(
+        'Chapter %s: %d segment(s) look truncated; re-rendering.',
+        chapter_id, len(suspects),
+    )
+    repaired = 0
+    for position, suspect in enumerate(suspects, start=1):
+        seg = segs[suspect['index']]
+        if job is not None:
+            job['message'] = (
+                f'Re-rendering suspect segment {position}/{len(suspects)}…'
+            )
+        char = chars.get(seg['character_name']) if seg['character_name'] else None
+        if char:
+            ref_audio = char['ref_audio_path'] if char.get('ref_audio_path') else None
+            ref_text = (char.get('ref_text') or None) if ref_audio else None
+        else:
+            ref_audio, ref_text = narrator_ref, narrator_ref_text
+
+        # The take already in hand is the baseline: if no retry beats it, the
+        # longest attempt is the one that most likely spoke the whole sentence.
+        best = {
+            'variant': 0,
+            'duration_sec': seg.get('duration_sec') or 0.0,
+            'audio_path': seg.get('audio_path'),
+            'cache_key': seg.get('cache_key'),
+        }
+        accepted = False
+        for variant in range(1, SUSPECT_RETRY_ATTEMPTS + 1):
+            try:
+                result = tts.generate(
+                    text=seg['enriched_text'],
+                    instruct=seg['instruct'],
+                    ref_audio=ref_audio,
+                    ref_text=ref_text,
+                    speed=seg['speed'],
+                    language=language,
+                    lexicon=lexicon,
+                    speaker=seg['character_name'] or None,
+                    variant=variant,
+                )
+            except Exception as exc:
+                log.warning('Retry %d failed for segment %s: %s', variant, seg['id'], exc)
+                break
+            _record_variant(seg['id'], variant, result)
+            if result['duration_sec'] > (best['duration_sec'] or 0):
+                best = {'variant': variant, **result}
+            if audio_check.is_acceptable(seg['text'], result['duration_sec'], median):
+                best = {'variant': variant, **result}
+                accepted = True
+                break
+
+        if best['variant'] == 0:
+            log.info(
+                'Segment %s stayed suspect after %d attempts (%s); keeping the '
+                'original take.', seg['id'], SUSPECT_RETRY_ATTEMPTS, suspect['reason'],
+            )
+            continue
+
+        # Register the original so the listener can still compare against it.
+        original_duration = seg.get('duration_sec') or 0.0
+        _record_variant(seg['id'], 0, {
+            'cache_key': seg.get('cache_key'),
+            'audio_path': seg.get('audio_path'),
+            'duration_sec': seg.get('duration_sec'),
+        })
+        seg['audio_path'] = best['audio_path']
+        seg['duration_sec'] = best['duration_sec']
+        seg['cache_key'] = best['cache_key']
+        with get_conn() as conn:
+            conn.execute(
+                'UPDATE tts_segments SET audio_path=?, duration_sec=?, cache_key=?, '
+                'selected_variant=? WHERE id=?',
+                (best['audio_path'], best['duration_sec'], best['cache_key'],
+                 best['variant'], seg['id']),
+            )
+        repaired += 1
+        log.info(
+            'Segment %s re-rendered as take %d (%s): %.2fs -> %.2fs',
+            seg['id'], best['variant'] + 1,
+            'back in range' if accepted else 'longest attempt, still suspect',
+            original_duration, best['duration_sec'],
+        )
+    if job is not None and repaired:
+        job['message'] = f'Re-rendered {repaired} suspect segment(s)'
 
 
 def _start_export_pool(job: dict) -> TTSExportPool:
@@ -2574,7 +2894,7 @@ def save_settings():
         'subtitle_format', 'theme', 'font_size', 'font_family', 'line_height',
         'normalize_text', 'pronunciation_dict',
         'tts_num_step', 'tts_batch_size', 'tts_coalesce_chars',
-        'audio_mastering',
+        'audio_mastering', 'tts_retry_suspect_segments',
         'tts_accel', 'tts_export_workers',
         'character_detection_mode', 'llm_provider',
         'llm_base_url', 'llm_api_key', 'llm_model',
@@ -2729,6 +3049,10 @@ def save_settings():
         updates['normalize_text'] = bool(updates['normalize_text'])
     if 'audio_mastering' in updates:
         updates['audio_mastering'] = bool(updates['audio_mastering'])
+    if 'tts_retry_suspect_segments' in updates:
+        updates['tts_retry_suspect_segments'] = bool(
+            updates['tts_retry_suspect_segments']
+        )
     if 'tts_num_step' in updates:
         try:
             step = int(updates['tts_num_step'])
@@ -2841,6 +3165,112 @@ def save_settings():
             )
 
     return jsonify({'ok': True, 'settings': result})
+
+
+# ── Audio cache maintenance ──────────────────────────────────────────────────
+# Two different things live under audio_cache/, and conflating them would be a
+# nasty surprise. Rendered sentences are disposable: delete them and the next
+# playback re-renders the same voice. The locked voice samples are not — an
+# instruction-only narrator is pinned to one generated clip, so deleting that
+# clip gives the book a different narrator.
+
+def _cache_dirs():
+    from core.tts_engine import AUDIO_CACHE_DIR, VOICE_PROMPT_DIR, VOICE_REF_DIR
+
+    return AUDIO_CACHE_DIR, VOICE_REF_DIR, VOICE_PROMPT_DIR
+
+
+def _cache_files(directory: str, suffixes: tuple[str, ...]) -> list[str]:
+    """Files this app wrote itself, never directories or anything else."""
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return []
+    paths = []
+    for name in names:
+        if not name.endswith(suffixes):
+            continue
+        path = os.path.join(directory, name)
+        if os.path.isfile(path) and not os.path.islink(path):
+            paths.append(path)
+    return paths
+
+
+def _cache_usage() -> dict:
+    audio_dir, ref_dir, prompt_dir = _cache_dirs()
+    rendered = _cache_files(audio_dir, ('.wav',))
+    voices = _cache_files(ref_dir, ('.wav',)) + _cache_files(prompt_dir, ('.pt',))
+
+    def total(paths):
+        return sum(os.path.getsize(p) for p in paths if os.path.exists(p))
+
+    return {
+        'rendered_files': len(rendered),
+        'rendered_bytes': total(rendered),
+        'voice_files': len(voices),
+        'voice_bytes': total(voices),
+    }
+
+
+def _delete_all(paths: list[str]) -> tuple[int, int]:
+    removed = freed = 0
+    for path in paths:
+        try:
+            size = os.path.getsize(path)
+            os.remove(path)
+        except OSError:
+            continue
+        removed += 1
+        freed += size
+    return removed, freed
+
+
+@app.route('/api/settings/audio-cache')
+def audio_cache_usage():
+    return jsonify(_cache_usage())
+
+
+@app.route('/api/settings/audio-cache', methods=['DELETE'])
+def clear_audio_cache():
+    if _export_exclusive_active():
+        return jsonify({
+            'error': 'Export in progress — the cache it is reading cannot be cleared.',
+            'export_busy': True,
+        }), 503
+
+    include_voices = str(request.args.get('include_voices', '')).lower() in (
+        '1', 'true', 'yes'
+    )
+    audio_dir, ref_dir, prompt_dir = _cache_dirs()
+    removed, freed = _delete_all(_cache_files(audio_dir, ('.wav',)))
+
+    with get_conn() as conn:
+        # The rows would otherwise point at files that no longer exist, and a
+        # kept take would name audio that is gone.
+        conn.execute('DELETE FROM tts_segment_variants')
+        conn.execute(
+            'UPDATE tts_segments SET audio_path=NULL, duration_sec=NULL, '
+            'cache_key=NULL, selected_variant=0'
+        )
+
+    voices_removed = voices_freed = 0
+    if include_voices:
+        voices_removed, voices_freed = _delete_all(
+            _cache_files(ref_dir, ('.wav',)) + _cache_files(prompt_dir, ('.pt',))
+        )
+        tts.invalidate_voice_prompt()
+
+    log.info(
+        'Audio cache cleared: %d rendered file(s), %d voice file(s), %.1f MB freed.',
+        removed, voices_removed, (freed + voices_freed) / (1024 * 1024),
+    )
+    return jsonify({
+        'ok': True,
+        'removed_files': removed,
+        'removed_voice_files': voices_removed,
+        'freed_bytes': freed + voices_freed,
+        'usage': _cache_usage(),
+    })
 
 
 @app.route('/api/settings/llm-test', methods=['POST'])

@@ -34,6 +34,8 @@ local engines never call out.
 - Preview voices before saving.
 - Upload reference WAV files for voice cloning.
 - Invalidate stale cached playback automatically when narrator or character voices change.
+- Re-render sentences that came back too short for their text, and audition
+  alternative takes of any sentence from the reader.
 - Export numbered, per-chapter audio as WAV or MP3 and subtitles as ASS or SRT.
 - Select all chapters or use print-style selections such as `1,3,5-8`.
 - Run from a project-local `.venv` created by the installer.
@@ -242,6 +244,29 @@ ElevenLabs settings section after a reload, before exporting one.
 4. Adjust character voices or the narrator voice, preview them, then save.
 5. Export the current chapter or select chapters with `all`, a range such as
    `2-6`, or a comma-separated expression such as `1,3,7-10`.
+
+### When a sentence reads badly
+
+Every engine occasionally swallows the last few words of a sentence, or lands
+the stress somewhere odd. Those are two different problems and Auris handles
+them separately.
+
+**Missing words are detected automatically.** After a chapter is generated, each
+sentence is compared against the chapter's own median speech rate — nothing is
+hardcoded per language, engine or voice — and a sentence whose audio is far too
+short for its text is re-rendered. Only the outliers cost extra time. Turn it
+off with **Re-render sentences that came out too short** in Settings → Generation
+& export.
+
+**Bad stress needs your ear.** While reading, the **🔁 Takes** button in the
+playback bar offers alternative readings of the current sentence: generate a
+couple, listen, and press *Keep* on the one you prefer. Playback and export use
+it from then on. Rejected takes — including any the automatic check threw away —
+stay in the list so you can go back.
+
+Takes belong to a segment, so re-enriching a chapter (a text edit, a new
+narrator voice, a pronunciation rule) discards them along with the audio they
+described.
 
 ### Language-model character detection
 

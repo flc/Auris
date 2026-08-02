@@ -71,6 +71,32 @@ DEFAULT_TTS_COALESCE_CHARS = 0
 AUDIO_CACHE_FORMAT_VERSION = 2
 
 
+# Alternative takes of one segment. Variant 0 is the original: it must keep
+# hashing to the key it always had, or every cached WAV in the library would be
+# orphaned by this feature.
+VARIANT_SEED_STRIDE = 7919
+
+
+def variant_cache_tag(variant: int) -> str:
+    """Cache-key suffix that separates alternative takes."""
+    return f"|v={int(variant)}" if variant else ""
+
+
+def variant_seed(base_seed: int, variant: int) -> int:
+    """A reproducible seed per alternative take.
+
+    Engines whose sampling is already random per call vary on their own, but
+    one configured to a fixed seed would otherwise return the same audio for
+    every take. Deriving from the variant index keeps alternatives distinct
+    and still repeatable after the audio cache is cleared.
+    """
+    variant = int(variant)
+    if variant <= 0:
+        return int(base_seed)
+    base = int(base_seed) if int(base_seed) >= 0 else 0
+    return (base + variant * VARIANT_SEED_STRIDE) % 2_147_483_647
+
+
 def _write_audio_atomic(path: str, audio: np.ndarray, sample_rate: int) -> None:
     """Write a cache WAV without exposing a partial file to another worker."""
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp.wav"
@@ -612,6 +638,8 @@ def _prompt_cache_key(ref_audio: str, ref_text: str | None) -> str:
 
 class TTSEngine:
     engine_name = "omnivoice"
+    # Alternative takes of a segment are possible: sampling is fresh per call.
+    supports_variants = True
     # Voice design samples a new speaker on every call, so an instruction-only
     # narrator has to be pinned to one rendered reference clip.
     uses_voice_lock = True
@@ -869,12 +897,14 @@ class TTSEngine:
         normalize_text: bool = False,
         num_step: int = DEFAULT_TTS_NUM_STEP,
         lexicon: str | None = None,
+        variant: int = 0,
     ) -> str:
         payload = (
             f"{text}|{instruct}|{ref_audio}|{ref_text}|{speed:.2f}|"
             f"{language or ''}|nt={int(bool(normalize_text))}|ns={int(num_step)}|"
             f"lex={lexicon_version(lexicon)}|"
             f"audio-cache-v={AUDIO_CACHE_FORMAT_VERSION}"
+            f"{variant_cache_tag(variant)}"
         )
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
@@ -1297,6 +1327,8 @@ class TTSEngine:
         language: str | None = None,
         normalize_text: bool | None = None,
         lexicon: str | None = None,
+        speaker: str | None = None,
+        variant: int = 0,
     ) -> dict:
         """
         Returns:
@@ -1306,6 +1338,9 @@ class TTSEngine:
                 cache_hit: bool,
                 cache_key: str,
             }
+
+        ``variant`` selects an alternative take. OmniVoice samples afresh on
+        every call, so a distinct cache key is all a new take needs.
         """
         if normalize_text is None:
             normalize_text = _normalize_text_enabled()
@@ -1331,6 +1366,7 @@ class TTSEngine:
             normalize_text=normalize_text,
             num_step=num_step,
             lexicon=lexicon,
+            variant=variant,
         )
         path = self.cache_path(key)
 
