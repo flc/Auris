@@ -21,6 +21,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from core.pronunciation import apply_pronunciation, lexicon_version
+
 log = logging.getLogger(__name__)
 
 AUDIO_CACHE_DIR = str(Path(__file__).resolve().parent.parent / "audio_cache")
@@ -32,6 +34,15 @@ VOICE_DESIGN_REF_TEXT = (
     "The room is quiet, the day is calm, and every word should sound clear, "
     "natural, and easy to understand."
 )
+# The locked reference conditions pronunciation as well as timbre, so the
+# sample is spoken in the book's own language where one is available.
+VOICE_DESIGN_REF_TEXTS = {
+    "hu": (
+        "Jó napot. Ez egy állandó hangminta a beszédhang rögzítéséhez. "
+        "A szoba csendes, a nap nyugodt, és minden szó tisztán, "
+        "természetesen és jól érthetően hangozzék."
+    ),
+}
 VOICE_REF_MIN_ZCR = 0.015
 VOICE_REF_GEN_ATTEMPTS = 4
 VOICE_GENDERS = {"male", "female"}
@@ -145,6 +156,28 @@ def _auto_batch_size_from_vram(voice_clone: bool = False) -> int:
     except Exception as exc:
         log.debug("VRAM auto batch probe failed: %s", exc)
         return 12 if voice_clone else 16
+
+
+def _voice_design_ref_language(language: str | None) -> str:
+    """Language tag of the locked reference sample, '' when none is defined."""
+    tag = str(language or "").strip().lower()[:2]
+    return tag if tag in VOICE_DESIGN_REF_TEXTS else ""
+
+
+def _voice_design_ref_text(language: str | None) -> str:
+    return VOICE_DESIGN_REF_TEXTS.get(
+        _voice_design_ref_language(language), VOICE_DESIGN_REF_TEXT
+    )
+
+
+def _voice_lock_enabled() -> bool:
+    """Whether an instruction-only narrator is pinned to one generated voice."""
+    try:
+        from core.settings import get
+
+        return bool(get("narrator_voice_lock", True))
+    except Exception:
+        return True
 
 
 def _tts_batch_size_from_settings(voice_clone: bool = False) -> int:
@@ -588,6 +621,8 @@ class TTSEngine:
         self._cancel_load = threading.Event()
         self._error: str | None = None
         self._prompt_mem: dict[str, object] = {}
+        # Locked narrator clips already verified in this process.
+        self._voice_lock_mem: set[str] = set()
         # After CUDA OOM, never retry larger packs in this process (avoids
         # 100% spike → OOM → half VRAM forever-churn on every subsequent batch).
         self._batch_size_cap: int | None = None
@@ -674,6 +709,7 @@ class TTSEngine:
         self._error = None
         self.model = None
         self._prompt_mem.clear()
+        self._voice_lock_mem.clear()
         self._batch_size_cap = None
         self._accel_status = {"effective": "off", "message": ""}
         self.load_async()
@@ -827,10 +863,12 @@ class TTSEngine:
         language: str | None = None,
         normalize_text: bool = False,
         num_step: int = DEFAULT_TTS_NUM_STEP,
+        lexicon: str | None = None,
     ) -> str:
         payload = (
             f"{text}|{instruct}|{ref_audio}|{ref_text}|{speed:.2f}|"
             f"{language or ''}|nt={int(bool(normalize_text))}|ns={int(num_step)}|"
+            f"lex={lexicon_version(lexicon)}|"
             f"audio-cache-v={AUDIO_CACHE_FORMAT_VERSION}"
         )
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
@@ -840,18 +878,60 @@ class TTSEngine:
         return os.path.join(AUDIO_CACHE_DIR, f"{key}.wav")
 
     @staticmethod
-    def _voice_ref_key(instruct: str) -> str:
-        return hashlib.md5(instruct.encode("utf-8")).hexdigest()
+    def _voice_ref_key(instruct: str, language: str | None = None) -> str:
+        identity = f"{instruct}|{_voice_design_ref_language(language)}"
+        return hashlib.md5(identity.encode("utf-8")).hexdigest()
 
-    def _voice_ref_path(self, instruct: str) -> str:
-        return os.path.join(VOICE_REF_DIR, f"{self._voice_ref_key(instruct)}.wav")
+    def _voice_ref_path(self, instruct: str, language: str | None = None) -> str:
+        return os.path.join(
+            VOICE_REF_DIR, f"{self._voice_ref_key(instruct, language)}.wav"
+        )
 
     def _prompt_path(self, key: str) -> str:
         return os.path.join(VOICE_PROMPT_DIR, f"{key}.pt")
 
     @staticmethod
-    def _needs_voice_design_stabilization(text: str, instruct: str | None, ref_audio: str | None) -> bool:
+    def _needs_voice_design_stabilization(instruct: str | None, ref_audio: str | None) -> bool:
+        """True when the voice would otherwise be re-sampled on every call."""
         return bool(instruct and not ref_audio)
+
+    def _resolve_voice(
+        self,
+        instruct: str | None,
+        ref_audio: str | None,
+        ref_text: str | None,
+        language: str | None = None,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Return the (instruct, ref_audio, ref_text) a segment is synthesized with.
+
+        Voice design draws a new speaker on every generate() call, so an
+        instruction-only narrator drifts into a different voice in each
+        segment even though the instruction never changes. Locking renders
+        one reference clip from that instruction and clones it from then on,
+        which is what holds a whole book to a single narrator.
+
+        A supplied reference always wins: a narrator/character clone stays a
+        pure clone, exactly as OmniVoice's mutually exclusive clone/design
+        conditioning requires.
+        """
+        effective_instruct = None if ref_audio else _stabilize_voice_design_instruct(instruct)
+        if not self._needs_voice_design_stabilization(effective_instruct, ref_audio):
+            return effective_instruct, ref_audio, ref_text
+        if not _voice_lock_enabled():
+            return effective_instruct, ref_audio, ref_text
+
+        try:
+            locked_audio, locked_text = self._ensure_voice_design_reference(
+                effective_instruct, language
+            )
+        except Exception as exc:
+            log.warning(
+                "Voice lock unavailable for '%s' (%s); falling back to voice design.",
+                effective_instruct,
+                exc,
+            )
+            return effective_instruct, ref_audio, ref_text
+        return None, locked_audio, locked_text
 
     def _load_voice_clone_prompt(self, path: str):
         from omnivoice import VoiceClonePrompt
@@ -967,10 +1047,16 @@ class TTSEngine:
         num_step: int,
         language: str | None,
         normalize_text: bool,
+        lexicon: str | None = None,
     ) -> dict:
         """Build OmniVoice.generate kwargs for one or many texts (same voice)."""
+        # The pronunciation lexicon runs regardless of ``normalize_text``:
+        # that switch controls number expansion, not how names are spoken.
         synth_texts = [
-            apply_text_normalization(t, language) if normalize_text else t
+            apply_pronunciation(
+                apply_text_normalization(t, language) if normalize_text else t,
+                lexicon,
+            )
             for t in texts
         ]
         multi = len(synth_texts) > 1
@@ -1010,6 +1096,7 @@ class TTSEngine:
         num_step: int = 32,
         language: str | None = None,
         normalize_text: bool = False,
+        lexicon: str | None = None,
     ) -> list[np.ndarray]:
         """Synthesize multiple texts that share the same voice conditioning."""
         if not texts:
@@ -1031,6 +1118,7 @@ class TTSEngine:
                 num_step=num_step,
                 language=language,
                 normalize_text=normalize_text,
+                lexicon=lexicon,
             )
             text_arg = kwargs.get("text")
             b_eff = len(text_arg) if isinstance(text_arg, list) else 1
@@ -1109,6 +1197,7 @@ class TTSEngine:
                         num_step=num_step,
                         language=language,
                         normalize_text=normalize_text,
+                        lexicon=lexicon,
                     )
                 )
             return out
@@ -1123,6 +1212,7 @@ class TTSEngine:
         num_step: int = 32,
         language: str | None = None,
         normalize_text: bool = False,
+        lexicon: str | None = None,
     ) -> np.ndarray:
         return self._synthesize_batch(
             texts=[text],
@@ -1133,25 +1223,36 @@ class TTSEngine:
             num_step=num_step,
             language=language,
             normalize_text=normalize_text,
+            lexicon=lexicon,
         )[0]
 
-    def _ensure_voice_design_reference(self, instruct: str) -> tuple[str, str]:
-        ref_path = self._voice_ref_path(instruct)
+    def _ensure_voice_design_reference(
+        self, instruct: str, language: str | None = None
+    ) -> tuple[str, str]:
+        ref_path = self._voice_ref_path(instruct, language)
+        ref_text = _voice_design_ref_text(language)
+        # Playback resolves the narrator for every segment, including cache
+        # hits; without this the clip would be read back and scored each time.
+        if ref_path in self._voice_lock_mem:
+            return ref_path, ref_text
         if os.path.exists(ref_path):
             cached_audio, _ = sf.read(ref_path)
             if _audio_zcr(cached_audio) >= VOICE_REF_MIN_ZCR:
-                return ref_path, VOICE_DESIGN_REF_TEXT
+                self._voice_lock_mem.add(ref_path)
+                return ref_path, ref_text
             log.warning("Discarding unstable cached voice reference for '%s'", instruct)
 
         best_audio = None
         best_zcr = -1.0
 
+        log.info("Rendering locked narrator voice for '%s' (%s)", instruct, language or "default")
         for attempt in range(VOICE_REF_GEN_ATTEMPTS):
             audio = self._synthesize_audio(
-                text=VOICE_DESIGN_REF_TEXT,
+                text=ref_text,
                 instruct=instruct,
                 speed=1.0,
                 num_step=24,
+                language=language,
                 normalize_text=False,
             )
             zcr = _audio_zcr(audio)
@@ -1168,14 +1269,17 @@ class TTSEngine:
                 zcr,
             )
 
-        sf.write(ref_path, best_audio, SAMPLE_RATE)
+        # Atomic: an export can synthesize on several threads, and a half
+        # written reference would be read back as the narrator's voice.
+        _write_audio_atomic(ref_path, best_audio, SAMPLE_RATE)
+        self._voice_lock_mem.add(ref_path)
         if best_zcr < VOICE_REF_MIN_ZCR:
             log.warning(
                 "Using best-effort voice reference for '%s' despite low zcr=%.4f",
                 instruct,
                 best_zcr,
             )
-        return ref_path, VOICE_DESIGN_REF_TEXT
+        return ref_path, ref_text
 
     def generate(
         self,
@@ -1187,6 +1291,7 @@ class TTSEngine:
         num_step: int | None = None,
         language: str | None = None,
         normalize_text: bool | None = None,
+        lexicon: str | None = None,
     ) -> dict:
         """
         Returns:
@@ -1207,9 +1312,9 @@ class TTSEngine:
         # OmniVoice supports either voice cloning or voice design for a
         # generation. Reference audio takes precedence over any saved style
         # instruction so a narrator/character clone stays a pure clone.
-        effective_instruct = None if ref_audio else _stabilize_voice_design_instruct(instruct)
-        effective_ref_audio = ref_audio
-        effective_ref_text = ref_text
+        effective_instruct, effective_ref_audio, effective_ref_text = self._resolve_voice(
+            instruct, ref_audio, ref_text, language
+        )
 
         key = self.cache_key(
             text,
@@ -1220,6 +1325,7 @@ class TTSEngine:
             language=language,
             normalize_text=normalize_text,
             num_step=num_step,
+            lexicon=lexicon,
         )
         path = self.cache_path(key)
 
@@ -1241,6 +1347,7 @@ class TTSEngine:
             num_step=num_step,
             language=language,
             normalize_text=normalize_text,
+            lexicon=lexicon,
         )
         _write_audio_atomic(path, audio, SAMPLE_RATE)
 
@@ -1318,6 +1425,7 @@ class TTSEngine:
             ref_text = raw.get("ref_text")
             speed = float(raw.get("speed") or 1.0)
             language = raw.get("language")
+            lexicon = raw.get("lexicon")
             if "normalize_text" in raw and raw["normalize_text"] is not None:
                 normalize_text = bool(raw["normalize_text"])
             else:
@@ -1325,9 +1433,9 @@ class TTSEngine:
 
             # Keep cache identity and batch grouping aligned with the actual
             # OmniVoice mode: a reference selects cloning, never design.
-            effective_instruct = None if ref_audio else _stabilize_voice_design_instruct(instruct)
-            effective_ref_audio = ref_audio
-            effective_ref_text = ref_text
+            effective_instruct, effective_ref_audio, effective_ref_text = self._resolve_voice(
+                instruct, ref_audio, ref_text, language
+            )
 
             key = self.cache_key(
                 text,
@@ -1338,6 +1446,7 @@ class TTSEngine:
                 language=language,
                 normalize_text=normalize_text,
                 num_step=num_step,
+                lexicon=lexicon,
             )
             path = self.cache_path(key)
 
@@ -1364,6 +1473,7 @@ class TTSEngine:
                     "speed": speed,
                     "language": language,
                     "normalize_text": normalize_text,
+                    "lexicon": lexicon,
                     "cache_key": key,
                     "cache_path": path,
                 }
@@ -1390,6 +1500,9 @@ class TTSEngine:
                 unit.get("ref_text") or "",
                 unit.get("language") or "",
                 int(bool(unit.get("normalize_text"))),
+                # One batch shares a single text rewrite, so a per-book
+                # lexicon has to keep the units apart.
+                unit.get("lexicon") or "",
             )
             groups.setdefault(group_key, []).append(unit)
 
@@ -1401,6 +1514,7 @@ class TTSEngine:
             ref_text = group_units[0].get("ref_text")
             language = group_units[0].get("language")
             normalize_text = group_units[0].get("normalize_text")
+            lexicon = group_units[0].get("lexicon")
             group_clone = bool(ref_audio)
 
             effective = self._effective_batch_size(batch_size, voice_clone=group_clone)
@@ -1457,6 +1571,7 @@ class TTSEngine:
                     num_step=num_step,
                     language=language,
                     normalize_text=bool(normalize_text),
+                    lexicon=lexicon,
                 )
                 for unit, audio in zip(sub, audios):
                     members = unit.get("members") or [unit]

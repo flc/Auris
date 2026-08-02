@@ -51,6 +51,9 @@
           Edit speakers
         </button>
         {% endif %}
+        <button class="btn btn-sm btn-ghost hidden" id="pron-marks-toggle"
+                onclick="togglePronunciationMarks()"
+                title="Underline words with a pronunciation rule"><span class="pron-toggle-glyph">Aa</span></button>
         <button class="btn btn-sm btn-ghost" onclick="changeFontSize(-1)" title="Smaller text">A&#8722;</button>
         <button class="btn btn-sm btn-ghost" onclick="changeFontSize(1)" title="Larger text">A+</button>
         <button class="btn btn-sm btn-ghost" id="theme-cycle-btn" onclick="cycleTheme()" title="Cycle theme (T)">&#9675;</button>

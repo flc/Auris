@@ -80,6 +80,18 @@ DEFAULTS: dict = {
     # EN/ZH prefer WeTextProcessing (optional); other languages use num2words.
     'normalize_text': True,
 
+    # Pin an instruction-only narrator to one voice. Voice design samples a
+    # new speaker on every call, so without this each segment is read by a
+    # different voice. The engine renders one reference clip from the
+    # narrator instruction and clones it for every segment afterwards.
+    'narrator_voice_lock': True,
+
+    # Pronunciation lexicon applied to the text sent to the model, never to
+    # the text on screen. One "source = spoken form" rule per line; the stem
+    # matches with any suffix attached ("Westerosban"). Mainly for foreign
+    # names in a book whose language gives them the wrong letter values.
+    'pronunciation_dict': '',
+
     # Internal migration marker. Version 2 stops treating OmniVoice's literal
     # "oh/ah" non-verbal tags as silent punctuation/prosody controls.
     'tts_expression_policy_version': TTS_EXPRESSION_POLICY_VERSION,

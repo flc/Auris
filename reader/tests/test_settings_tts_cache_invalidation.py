@@ -56,6 +56,32 @@ class SettingsTtsCacheInvalidationTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self._segment_count(), 1)
 
+    def test_pronunciation_change_clears_persisted_playback_segments(self):
+        response = self.client.post(
+            '/api/settings',
+            json={'pronunciation_dict': 'Westeros = Veszterosz'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()['settings']['pronunciation_dict'],
+            'Westeros = Veszterosz',
+        )
+        self.assertEqual(self._segment_count(), 0)
+
+    def test_voice_lock_change_clears_persisted_playback_segments(self):
+        response = self.client.post('/api/settings', json={'narrator_voice_lock': False})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(response.get_json()['settings']['narrator_voice_lock'], False)
+        self.assertEqual(self._segment_count(), 0)
+
+    def test_unchanged_pronunciation_keeps_persisted_playback_segments(self):
+        response = self.client.post('/api/settings', json={'pronunciation_dict': ''})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._segment_count(), 1)
+
     def test_expression_policy_migration_marks_old_prompts_stale_once(self):
         settings.save({'tts_expression_policy_version': 1})
 

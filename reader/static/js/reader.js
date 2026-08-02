@@ -285,6 +285,63 @@ async function openChapter(chapterId, options = {}) {
   _prewarmChapter();
 }
 
+// ── Pronunciation marks ───────────────────────────────────────────────────────
+//
+// The server sends the matcher it rewrites text with, so an underlined word is
+// exactly a word the model hears differently — never an approximation of it.
+
+let pronRegex = null;
+let pronSpoken = new Map();
+let pronMarksOn = localStorage.getItem('pronMarks') !== 'off';
+
+async function loadPronunciationMarks() {
+  try {
+    const r = await fetch(`/api/books/${BOOK_ID}/pronunciation`);
+    if (!r.ok) return;
+    const d = await r.json();
+    pronSpoken = new Map((d.entries || []).map(e => [e.source.toLowerCase(), e.spoken]));
+    pronRegex = d.pattern ? new RegExp(d.pattern, 'gi') : null;
+  } catch (e) {
+    pronRegex = null;
+  }
+  syncPronMarksUI();
+  if (segments.length) renderContent(segments);
+}
+
+function pronunciationMatches(text) {
+  if (!pronRegex || !pronMarksOn) return [];
+  pronRegex.lastIndex = 0;
+  const found = [];
+  let match;
+  while ((match = pronRegex.exec(text)) !== null) {
+    if (match[0] === '') { pronRegex.lastIndex += 1; continue; }
+    found.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      spoken: pronSpoken.get((match[1] || '').toLowerCase()) || '',
+    });
+  }
+  return found;
+}
+
+function syncPronMarksUI() {
+  const button = document.getElementById('pron-marks-toggle');
+  if (!button) return;
+  const available = Boolean(pronRegex);
+  button.classList.toggle('hidden', !available);
+  button.classList.toggle('active', pronMarksOn);
+  button.title = pronMarksOn
+    ? 'Hide pronunciation underlines'
+    : 'Underline words with a pronunciation rule';
+}
+
+function togglePronunciationMarks() {
+  pronMarksOn = !pronMarksOn;
+  localStorage.setItem('pronMarks', pronMarksOn ? 'on' : 'off');
+  syncPronMarksUI();
+  renderContent(segments);
+}
+
 // ── Content rendering ─────────────────────────────────────────────────────────
 
 function renderContent(segs) {
@@ -297,9 +354,26 @@ function renderContent(segs) {
 
   const html = segs.map((seg, i) => {
     const words = seg.text.split(/(\s+)/);
+    // Matches are found on the whole sentence, so a multi-word rule marks
+    // every token it covers.
+    const marks = pronunciationMatches(seg.text);
+    let offset = 0;
     const wordSpans = words.map((w, wi) => {
+      const start = offset;
+      offset += w.length;
       if (/^\s+$/.test(w)) return w;
-      return `<span class="word" data-seg="${i}" data-word="${wi}">${esc(w)}</span>`;
+      const hit = marks.find(m => m.start < start + w.length && m.end > start);
+      const attrs = `data-seg="${i}" data-word="${wi}"`;
+      if (!hit) return `<span class="word" ${attrs}>${esc(w)}</span>`;
+
+      // Underline only the part a rule covers, so trailing punctuation and
+      // the rest of a hyphenated compound stay clean.
+      const from = Math.max(hit.start - start, 0);
+      const to = Math.min(hit.end - start, w.length);
+      const title = hit.spoken ? ` title="Spoken as “${esc(hit.spoken)}”"` : '';
+      return `<span class="word has-pron" ${attrs}>${esc(w.slice(0, from))}` +
+        `<span class="pron-term"${title}>${esc(w.slice(from, to))}</span>` +
+        `${esc(w.slice(to))}</span>`;
     }).join('');
 
 
@@ -1543,3 +1617,4 @@ document.addEventListener('visibilitychange', () => {
 });
 
 loadTOC();
+loadPronunciationMarks();

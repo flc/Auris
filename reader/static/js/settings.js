@@ -12,7 +12,10 @@ function setSettingsDirty(dirty) {
   if (banner) banner.classList.toggle('hidden', !dirty);
 }
 
-function markSettingsDirty() {
+function markSettingsDirty(event) {
+  // Controls that only change the view — a filter box, say — are not settings
+  // and must not ask to be saved.
+  if (event?.target?.closest?.('[data-transient]')) return;
   if (_settingsReady) setSettingsDirty(true);
 }
 
@@ -112,8 +115,11 @@ async function loadSettings() {
   document.getElementById('narrator-instruct').value = _settings.narrator_instruct || '';
   document.getElementById('default-single-narrator-mode').checked = Boolean(_settings.single_narrator_mode);
 
+  document.getElementById('narrator-voice-lock').checked = _settings.narrator_voice_lock !== false;
+
   // TTS text processing (default true when unset)
   document.getElementById('normalize-text').checked = _settings.normalize_text !== false;
+  initPronunciationTable(_settings.pronunciation_dict || '');
 
   // Export / TTS quality
   const steps = String(_settings.tts_num_step ?? 16);
@@ -587,7 +593,9 @@ async function saveSettings() {
     llm_max_characters: parseInt(document.getElementById('llm-max-characters').value, 10) || 60,
     narrator_instruct: document.getElementById('narrator-instruct').value.trim(),
     single_narrator_mode: document.getElementById('default-single-narrator-mode').checked,
+    narrator_voice_lock: document.getElementById('narrator-voice-lock').checked,
     normalize_text:    document.getElementById('normalize-text').checked,
+    pronunciation_dict: pronunciationTable ? pronunciationTable.value() : '',
     tts_num_step:      parseInt(document.getElementById('tts-num-step').value, 10) || 16,
     tts_batch_size:    parseInt(document.getElementById('tts-batch-size').value, 10) || 0,
     tts_coalesce_chars: parseInt(document.getElementById('tts-coalesce-chars').value, 10) || 0,
@@ -620,6 +628,65 @@ async function saveSettings() {
     setSettingsDirty(false);
   } else {
     hint.textContent = 'Save failed.';
+    hint.className   = 'status-hint status-error';
+  }
+}
+
+// ── Pronunciation dictionary ──────────────────────────────────────────────────
+
+let pronunciationTable = null;
+
+function initPronunciationTable(value) {
+  const host = document.getElementById('pronunciation-dict');
+  if (!host) return;
+  if (pronunciationTable) {
+    pronunciationTable.setValue(value);
+    return;
+  }
+  pronunciationTable = createLexiconTable(host, {
+    value,
+    // Editing happens inside the component, so Save has to learn about it here.
+    onChange: markSettingsDirty,
+  });
+}
+
+// ── Default narrator preview ──────────────────────────────────────────────────
+
+async function previewDefaultNarrator() {
+  const hint  = document.getElementById('narrator-preview-hint');
+  const audio = document.getElementById('narrator-preview-audio');
+  const instruct = document.getElementById('narrator-instruct').value.trim();
+  if (!instruct) {
+    hint.textContent = 'Enter a voice instruct string first.';
+    hint.className   = 'status-hint status-error';
+    return;
+  }
+
+  // The first preview of a voice also renders its locked reference clip.
+  hint.textContent = 'Synthesizing…';
+  hint.className   = 'status-hint status-warn';
+  try {
+    const r = await fetch('/api/settings/narrator-preview', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        instruct,
+        language: document.getElementById('narrator-preview-language').value || null,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) {
+      hint.textContent = `Preview failed: ${d.error || r.status}`;
+      hint.className   = 'status-hint status-error';
+      return;
+    }
+    audio.src = `${d.audio_url}?t=${Date.now()}`;
+    audio.classList.remove('hidden');
+    await audio.play();
+    hint.textContent = '';
+    hint.className   = 'status-hint';
+  } catch (e) {
+    hint.textContent = `Preview failed: ${e}`;
     hint.className   = 'status-hint status-error';
   }
 }

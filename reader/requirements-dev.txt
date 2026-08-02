@@ -1,0 +1,15 @@
+# OmniReader — test-only dependencies.
+#
+# Kept out of requirements.txt so an end-user install stays lean: nothing here
+# is needed to run the app.
+#
+#   pip install -r requirements-dev.txt
+#   playwright install chromium
+#   sudo <venv>/bin/playwright install-deps chromium   # Linux/WSL system libs
+#
+# tests/test_ui_pronunciation.py drives the pronunciation dictionary editor in
+# a real browser — it is client-side, so a DOM is the only place its filtering,
+# focus handling and duplicate detection actually exist. The test skips itself
+# when Playwright or its browser is missing.
+
+playwright>=1.50

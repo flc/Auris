@@ -16,8 +16,12 @@ Environment:
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import sysconfig
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -132,6 +136,8 @@ def cuda_to_wheel_tag(cuda_version):
         return None
 
     major, minor = (int(part) for part in cuda_version.split(".", 1))
+    if (major, minor) >= (13, 0):
+        return "cu130"
     if (major, minor) >= (12, 8):
         return "cu128"
     if (major, minor) >= (12, 4):
@@ -214,6 +220,104 @@ def pip_install(*args, no_index=False, index_url=None, extra_index_url=None):
     run(cmd)
 
 
+# Newest torch/torchaudio pair known to work together, used when the PyTorch
+# index cannot be queried. torchaudio releases lag torch, so this is a
+# torchaudio version that torch also publishes.
+FALLBACK_TORCH_VERSION = "2.11.0"
+
+
+def index_versions(index_url, package):
+    """Versions of `package` on a PyTorch wheel index, for this interpreter."""
+    py_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    try:
+        with urllib.request.urlopen(f"{index_url}/{package}/", timeout=20) as resp:
+            html = resp.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return set()
+
+    pattern = rf"{package}-(\d+\.\d+\.\d+)%2B\w+-{py_tag}-"
+    return set(re.findall(pattern, html))
+
+
+def matched_torch_version(index_url):
+    """Newest version published for BOTH torch and torchaudio on the index.
+
+    torchaudio wheels declare no dependency on torch, so an unpinned install
+    happily mixes CUDA variants (e.g. torch +cu130 with torchaudio +cu128) and
+    torchaudio then fails to dlopen for want of the other CUDA runtime.
+    Pinning both to one version from one index keeps the pair consistent.
+    """
+    common = index_versions(index_url, "torch") & index_versions(index_url, "torchaudio")
+    if not common:
+        warn(
+            f"Could not read versions from {index_url}; "
+            f"falling back to torch {FALLBACK_TORCH_VERSION}"
+        )
+        return FALLBACK_TORCH_VERSION
+
+    return max(common, key=lambda v: tuple(int(p) for p in v.split(".")))
+
+
+def verify_torch_stack():
+    """Import torch and torchaudio, surfacing the real dlopen error if any.
+
+    A mismatched pair installs cleanly and only fails at import, which the app
+    reports much later as "Load failed" when loading the TTS engine.
+    """
+    step("Verifying PyTorch stack")
+    code = (
+        "import torch, torchaudio; "
+        "print(torch.__version__, torchaudio.__version__, torch.cuda.is_available())"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        ok(f"torch / torchaudio import OK: {result.stdout.strip()}")
+        return True
+
+    warn("torch/torchaudio failed to import — TTS will not load:")
+    for line in (result.stderr or "").strip().splitlines()[-6:]:
+        print(f"    {line}")
+    return False
+
+
+def check_build_toolchain(hw_tag):
+    """Check for the C toolchain Triton needs to compile CUDA kernels.
+
+    The CUDA torch wheel pulls in Triton, which ships its own LLVM but shells
+    out to the system C compiler the first time it compiles a kernel — during
+    TTS generation, long after setup. Without it, install and model load both
+    succeed and only playback fails, with Triton's own message:
+    "Failed to find C compiler. Please specify via CC environment variable."
+    """
+    if os.name == "nt" or hw_tag in {"cpu", "mps"}:
+        return True
+
+    step("Checking C toolchain (Triton kernel compilation)")
+    candidates = [os.environ.get("CC", "").strip()] if os.environ.get("CC") else ["cc", "gcc", "clang"]
+    compiler = next((shutil.which(c) for c in candidates if c and shutil.which(c)), None)
+    headers = Path(sysconfig.get_paths()["include"]) / "Python.h"
+
+    missing = []
+    if not compiler:
+        missing.append("a C compiler (cc / gcc / clang)")
+    if not headers.exists():
+        missing.append(f"CPython development headers ({headers})")
+
+    if not missing:
+        ok(f"C compiler: {compiler}")
+        return True
+
+    for item in missing:
+        warn(f"Missing: {item}")
+    warn("Triton compiles CUDA kernels on first use; TTS playback fails without these.")
+    warn("  Debian / Ubuntu / WSL : sudo apt install -y build-essential python3-dev")
+    warn("  Fedora / RHEL         : sudo dnf install -y gcc gcc-c++ python3-devel")
+    warn("  Arch                  : sudo pacman -S --needed base-devel")
+    return False
+
+
 def install_torch(hw_tag):
     step("Installing PyTorch + torchaudio")
 
@@ -260,9 +364,14 @@ def install_torch(hw_tag):
             ],
             check=False,
         )
+        # Pin version AND CUDA tag on both packages. Unpinned, pip picks the
+        # highest version across indexes and PyPI's newer torch outranks this
+        # index's — leaving torch and torchaudio on different CUDA runtimes.
+        version = matched_torch_version(index_url)
+        info(f"Pinning torch/torchaudio {version}+{hw_tag}")
         pip_install(
-            "torch",
-            "torchaudio",
+            f"torch=={version}+{hw_tag}",
+            f"torchaudio=={version}+{hw_tag}",
             index_url=index_url,
             # Keep PyPI available for any remaining pure-Python deps.
             extra_index_url="https://pypi.org/simple",
@@ -421,12 +530,20 @@ def main():
         ensure_pip()
 
     hw_tag = detect_hardware()
+    toolchain_ok = check_build_toolchain(hw_tag)
     install_torch(hw_tag)
     install_omnivoice_deps()
     install_omnivoice()
     install_higgs_transformers_runtime()
     install_reader_deps()
     install_spacy_model()
+    # Run last: any of the steps above can pull a different torch as a
+    # dependency, and a broken pair only shows up at import time.
+    verify_torch_stack()
+    # Re-check so the warning is the last thing on screen, not buried above
+    # several minutes of install output (and to catch a fix made meanwhile).
+    if not toolchain_ok:
+        check_build_toolchain(hw_tag)
     print_summary(hw_tag)
 
 

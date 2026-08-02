@@ -14,6 +14,8 @@ from flask import (
 )
 
 from core.database import init_db, get_conn
+from core import pronunciation
+from core.pronunciation import combine_lexicons
 from core.tts_batcher import InteractiveTTSBatcher
 from core.tts_engine import TTSExportPool
 from core.tts_router import TTSEngineRouter
@@ -98,6 +100,18 @@ VOICE_PREVIEW_TEXT = (
     'Hello. This is a voice preview sample. The afternoon is calm, the room is quiet, '
     'and every word should sound clear, steady, and natural.'
 )
+# A preview in the book's own language is the only one that tells you how the
+# narrator will actually sound while reading it.
+VOICE_PREVIEW_TEXTS = {
+    'hu': (
+        'Jó napot. Ez egy hangminta a narrátorhoz. A délután nyugodt, a szoba csendes, '
+        'és minden szó tisztán, egyenletesen és természetesen szólal meg.'
+    ),
+}
+
+
+def _preview_text(language: str | None) -> str:
+    return VOICE_PREVIEW_TEXTS.get(str(language or '').strip().lower()[:2], VOICE_PREVIEW_TEXT)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -177,6 +191,27 @@ def _book_narrator_reference(book_id: int) -> tuple[str | None, str | None]:
 
 def _book_narrator_ref_audio(book_id: int) -> str | None:
     return _book_narrator_reference(book_id)[0]
+
+
+def _book_pronunciation(book_id: int) -> str:
+    """The lexicon a book is read with: its own rules, then the global ones.
+
+    Rules are deduplicated by first occurrence, so a book can override a
+    global rule for a name that is pronounced differently in its own world
+    while still inheriting everything it does not mention.
+    """
+    book_rules = ''
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                'SELECT pronunciation_dict FROM books WHERE id=?', (book_id,)
+            ).fetchone()
+        if row and isinstance(row['pronunciation_dict'], str):
+            book_rules = row['pronunciation_dict']
+    except Exception as exc:
+        log.warning('Unable to load pronunciation rules for book %s: %s', book_id, exc)
+
+    return combine_lexicons(book_rules, app_settings.get('pronunciation_dict', ''))
 
 
 def _delete_file_if_exists(path: str | None):
@@ -1118,6 +1153,19 @@ def preview_character(book_id, char_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/books/<int:book_id>/pronunciation', methods=['GET'])
+def get_book_pronunciation(book_id):
+    """The rules this book is read with, plus the matcher the reader marks with."""
+    if not _load_book(book_id):
+        return jsonify({'error': 'Not found'}), 404
+
+    raw = _book_pronunciation(book_id)
+    return jsonify({
+        'entries': pronunciation.entries(raw),
+        'pattern': pronunciation.pattern_source(raw),
+    })
+
+
 @app.route('/api/books/<int:book_id>/narrator', methods=['GET'])
 def get_narrator(book_id):
     book = _load_book(book_id)
@@ -1129,6 +1177,7 @@ def get_narrator(book_id):
         'single_narrator_mode': _book_single_narrator_mode(book_data),
         'ref_audio_name': book_data.get('narrator_ref_audio_name'),
         'ref_text': book_data.get('narrator_ref_text') or '',
+        'pronunciation_dict': book_data.get('pronunciation_dict') or '',
     })
 
 
@@ -1159,6 +1208,9 @@ def update_narrator(book_id):
     raw_ref_text = body.get('ref_text', book_data.get('narrator_ref_text') or '')
     ref_text = raw_ref_text.strip() if isinstance(raw_ref_text, str) else ''
     ref_text_changed = ref_text != (book_data.get('narrator_ref_text') or '')
+    raw_lexicon = body.get('pronunciation_dict', book_data.get('pronunciation_dict') or '')
+    lexicon = raw_lexicon.strip() if isinstance(raw_lexicon, str) else ''
+    lexicon_changed = lexicon != (book_data.get('pronunciation_dict') or '')
 
     with get_conn() as conn:
         if ref_text_changed and book_data.get('narrator_ref_audio_path'):
@@ -1172,11 +1224,14 @@ def update_narrator(book_id):
             )
         conn.execute(
             'UPDATE books SET narrator_instruct=?, single_narrator_mode=?, '
-            'narrator_ref_text=? WHERE id=?',
-            (instruct, int(single_narrator_mode), ref_text, book_id)
+            'narrator_ref_text=?, pronunciation_dict=? WHERE id=?',
+            (instruct, int(single_narrator_mode), ref_text, lexicon, book_id)
         )
 
-    if narrator_changed or mode_changed or ref_text_changed:
+    # Persisted segment rows bypass the engine cache, so anything that changes
+    # the audio has to drop them or playback keeps serving the old take.
+    changed = narrator_changed or mode_changed or ref_text_changed or lexicon_changed
+    if changed:
         _clear_book_tts_segments(book_id)
 
     return jsonify({
@@ -1184,7 +1239,8 @@ def update_narrator(book_id):
         'instruct': instruct,
         'single_narrator_mode': single_narrator_mode,
         'ref_text': ref_text,
-        'segments_cleared': narrator_changed or mode_changed or ref_text_changed,
+        'pronunciation_dict': lexicon,
+        'segments_cleared': changed,
     })
 
 
@@ -1200,15 +1256,17 @@ def preview_narrator(book_id):
         return jsonify({'error': 'Model not ready', 'status': status}), 503
 
     instruct = (body.get('instruct') or _book_narrator_instruct(dict(book))).strip()
+    language = dict(book).get('language') or None
     narrator_ref, saved_ref_text = _book_narrator_reference(book_id)
     requested_ref_text = body.get('ref_text', saved_ref_text)
     narrator_ref_text = requested_ref_text.strip() if narrator_ref and isinstance(requested_ref_text, str) and requested_ref_text.strip() else None
     try:
         result = tts.generate_preview(
             instruct=instruct,
-            sample_text=VOICE_PREVIEW_TEXT,
+            sample_text=_preview_text(language),
             ref_audio=narrator_ref,
             ref_text=narrator_ref_text,
+            language=language,
         )
         return jsonify({'audio_url': f'/api/audio/{result["cache_key"]}'})
     except Exception as e:
@@ -1441,6 +1499,7 @@ def tts_generate():
         'ref_text': ref_text,
         'speed': seg['speed'],
         'language': language,
+        'lexicon': _book_pronunciation(book_id),
     }
     request_key = (
         seg['id'],
@@ -1450,6 +1509,7 @@ def tts_generate():
         ref_text,
         float(seg['speed']),
         language,
+        item['lexicon'],
     )
     try:
         result = _interactive_tts_batcher.submit(request_key, item)
@@ -1657,6 +1717,7 @@ def _ensure_audio_for_chapter(
             ).fetchall()
         }
     narrator_ref, narrator_ref_text = _book_narrator_reference(book_id)
+    lexicon = _book_pronunciation(book_id)
 
     pending_idx: list[int] = []
     pending_items: list[dict] = []
@@ -1682,6 +1743,7 @@ def _ensure_audio_for_chapter(
             'ref_text': ref_text,
             'speed': seg['speed'],
             'language': language,
+            'lexicon': lexicon,
         })
 
     if not pending_items:
@@ -1791,6 +1853,7 @@ def _ensure_audio_for_chapter(
                     speed=item['speed'],
                     language=item['language'],
                     num_step=num_step,
+                    lexicon=item.get('lexicon'),
                 )
             except Exception as seg_exc:
                 log.warning('Audio generation failed for segment: %s', seg_exc)
@@ -2381,7 +2444,13 @@ def delete_bookmark(book_id, bm_id):
 
 @app.route('/settings')
 def settings_page():
-    return render_template('settings.html')
+    from core.tts_engine import VOICE_DESIGN_REF_TEXTS
+
+    # Each of these renders its own locked narrator clip, so previewing in the
+    # book's language is the only way to hear the voice a book will use.
+    return render_template(
+        'settings.html', preview_languages=sorted(VOICE_DESIGN_REF_TEXTS)
+    )
 
 
 @app.route('/docs')
@@ -2405,9 +2474,11 @@ def save_settings():
         'higgs_temperature', 'higgs_top_p', 'higgs_top_k',
         'higgs_max_new_tokens', 'higgs_seed', 'higgs_default_emotion',
         'higgs_default_style', 'higgs_default_expressive', 'higgs_prompt_mode',
-        'narrator_instruct', 'single_narrator_mode', 'default_speed', 'audio_format',
+        'narrator_instruct', 'single_narrator_mode', 'narrator_voice_lock',
+        'default_speed', 'audio_format',
         'subtitle_format', 'theme', 'font_size', 'font_family', 'line_height',
-        'normalize_text', 'tts_num_step', 'tts_batch_size', 'tts_coalesce_chars',
+        'normalize_text', 'pronunciation_dict',
+        'tts_num_step', 'tts_batch_size', 'tts_coalesce_chars',
         'audio_mastering',
         'tts_accel', 'tts_export_workers',
         'character_detection_mode', 'llm_provider',
@@ -2531,9 +2602,15 @@ def save_settings():
         'tts_num_step',
         'normalize_text',
     }
+    # Both engines read these: the lexicon rewrites the spoken text, and the
+    # voice lock decides whether a segment is voice-designed or cloned.
+    shared_audio_keys = {
+        'pronunciation_dict',
+        'narrator_voice_lock',
+    }
     if any(
         key in updates and updates[key] != previous.get(key)
-        for key in higgs_audio_keys | omnivoice_audio_keys
+        for key in higgs_audio_keys | omnivoice_audio_keys | shared_audio_keys
     ):
         with get_conn() as conn:
             conn.execute('DELETE FROM tts_segments')
@@ -2614,6 +2691,40 @@ def start_download():
 @app.route('/api/settings/model-download/progress')
 def download_progress():
     return jsonify(app_settings.download_state())
+
+
+@app.route('/api/settings/narrator-preview', methods=['POST'])
+def preview_default_narrator():
+    """Preview the default narrator voice without opening a book.
+
+    Goes through the same generate path as playback, so with the voice lock on
+    this plays the very clip every book without its own reference will clone.
+    """
+    body = request.get_json(silent=True) or {}
+    status = tts.status()
+    if status['state'] != 'ready':
+        return jsonify({'error': 'Model not ready', 'status': status}), 503
+
+    raw_instruct = body.get('instruct')
+    instruct = (
+        raw_instruct.strip()
+        if isinstance(raw_instruct, str) and raw_instruct.strip()
+        else str(app_settings.get('narrator_instruct', '') or '').strip()
+    )
+    if not instruct:
+        return jsonify({'error': 'Narrator instruct is required'}), 400
+
+    language = str(body.get('language') or '').strip() or None
+    sample_text = str(body.get('sample_text') or '').strip() or _preview_text(language)
+    try:
+        result = tts.generate_preview(
+            instruct=instruct,
+            sample_text=sample_text,
+            language=language,
+        )
+        return jsonify({'audio_url': f'/api/audio/{result["cache_key"]}'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/settings/tts-reload', methods=['POST'])

@@ -10,8 +10,12 @@
 #   Do NOT list torch/torchaudio here. setup.py installs the correct CUDA/CPU
 #   build first. Including them in this file causes `pip install -r` to pull
 #   a CPU wheel from PyPI and overwrite the CUDA install (breaks TTS load).
-#   Manual GPU install if needed:
-#     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+#   Manual GPU install if needed — pin the version AND the CUDA tag on both, or
+#   pip may take torch from PyPI and torchaudio from the CUDA index, leaving
+#   them on different CUDA runtimes (torchaudio then fails to dlopen):
+#     pip install torch==2.11.0+cu130 torchaudio==2.11.0+cu130 \
+#         --index-url https://download.pytorch.org/whl/cu130
+#   (cu130 for CUDA 13.x; use cu128 for CUDA 12.8-12.9.)
 
 # Tell pip to also search the bundled wheels when doing an offline install.
 --find-links=../wheels
@@ -49,6 +53,8 @@ flask>=3.0
 ebooklib>=0.18
 pymupdf>=1.24            # PyMuPDF — imported as: import fitz
 spacy>=3.7               # NLP / character detection
+
+# Browser tests live in requirements-dev.txt; end users do not need them.
 
 # After installing, download the English spaCy model (requires internet once):
 #   python -m spacy download en_core_web_sm

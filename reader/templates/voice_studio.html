@@ -51,11 +51,6 @@
           <div class="studio-note">
             When enabled, playback and export use the narrator voice for every line.
           </div>
-          <div class="char-card-footer">
-            <span class="instruct-preview" id="narrator-instruct-preview"></span>
-            <button class="btn btn-sm btn-ghost preview-btn" data-char-id="narrator">&#9654; Preview</button>
-            <button class="btn btn-sm btn-primary" onclick="saveNarrator()">Save</button>
-          </div>
           <div id="narrator-ref-status" class="reference-status{% if not book.narrator_ref_audio_path %} hidden{% endif %}">
             <span class="reference-status-label">Active reference:</span>
             <span id="narrator-ref-name">{{ book.narrator_ref_audio_name or 'Previously uploaded WAV' }}</span>
@@ -83,6 +78,24 @@
               >Remove reference</button>
             </div>
             <div class="studio-note">Best results: a clean, single-speaker, 3–10 second clip in the target language.</div>
+          </div>
+          <div class="clone-section">
+            <label>Pronunciation dictionary for this book</label>
+            <div id="book-pronunciation-dict"></div>
+            <div class="studio-note">
+              Rewrites names only in the text sent to the model; the book on screen is untouched,
+              though words carrying a rule are underlined while you read. The written form matches
+              with any suffix attached (“Westerosban”). These rules are added to the global
+              dictionary in Settings and win where both define the same word.
+              Saving re-synthesizes the affected segments.
+            </div>
+          </div>
+          <!-- Last in the card: Save covers every field above it, including
+               the transcript and the pronunciation rules. -->
+          <div class="char-card-footer card-actions">
+            <span class="instruct-preview" id="narrator-instruct-preview"></span>
+            <button class="btn btn-sm btn-ghost preview-btn" data-char-id="narrator">&#9654; Preview</button>
+            <button class="btn btn-sm btn-primary" onclick="saveNarrator()">Save narrator</button>
           </div>
         </div>
       </div>
@@ -120,5 +133,7 @@
 <script>window.NARRATOR_HAS_REF_AUDIO = {{ 1 if book.narrator_ref_audio_path else 0 }};</script>
 <script>window.NARRATOR_REF_AUDIO_NAME = {{ (book.narrator_ref_audio_name or '')|tojson }};</script>
 <script>window.CURRENT_CHAPTER_ID = {{ current_chapter.id if current_chapter else 'null' }};</script>
+<script>window.BOOK_PRONUNCIATION = {{ (book.pronunciation_dict or '')|tojson }};</script>
+<script src="/static/js/lexicon_table.js"></script>
 <script src="/static/js/voice_studio.js"></script>
 {% endblock %}

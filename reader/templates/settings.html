@@ -4,6 +4,7 @@
 <div class="settings-page">
   <h1 class="settings-page-title">Settings</h1>
   <div class="settings-layout">
+    <div class="settings-side">
     <nav class="settings-nav" aria-label="Settings categories" role="tablist">
       <button class="settings-nav-item active" type="button" role="tab"
               aria-selected="true" aria-controls="settings-speech"
@@ -26,6 +27,12 @@
         Reading interface
       </button>
     </nav>
+    <div id="settings-unsaved-banner" class="settings-unsaved-banner hidden"
+         role="status" aria-live="polite">
+      <span><strong>Unsaved changes.</strong> They are lost if you leave.</span>
+      <button class="btn btn-primary btn-sm" type="button" onclick="saveSettings()">Save Settings</button>
+    </div>
+    </div>
     <div class="settings-panels">
       <div class="settings-category active" id="settings-speech"
            data-settings-category="speech" role="tabpanel">
@@ -333,11 +340,43 @@
       </span>
     </div>
     <div class="setting-row">
+      <label>Preview</label>
+      <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+        <select id="narrator-preview-language" class="select-input" style="width:auto">
+          <option value="">Default sample</option>
+          {% for code in preview_languages %}
+          <option value="{{ code }}">{{ code }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn" type="button" onclick="previewDefaultNarrator()">Play preview</button>
+        <span id="narrator-preview-hint" class="status-hint"></span>
+      </div>
+      <audio id="narrator-preview-audio" controls class="hidden" style="margin-top:.5rem;width:100%"></audio>
+      <span class="muted" style="font-size:.78rem">
+        Synthesizes a sample with the instruct string above, through the same path as
+        playback. With the voice lock on, this is the exact voice books without their own
+        reference audio will use — pick the book's language, since each language gets its
+        own locked clip.
+      </span>
+    </div>
+    <div class="setting-row">
       <label class="narrator-mode-row">
         <input type="checkbox" id="default-single-narrator-mode">
         <span>Use narrator only for newly imported books</span>
       </label>
       <span class="muted" style="font-size:.78rem">Existing books can still be changed per book in Voice Studio.</span>
+    </div>
+    <div class="setting-row">
+      <label class="narrator-mode-row">
+        <input type="checkbox" id="narrator-voice-lock">
+        <span>Lock the narrator to one voice</span>
+      </label>
+      <span class="muted" style="font-size:.78rem">
+        Without a reference clip both engines pick a new speaker for every segment, so the
+        narrator changes voice line by line. With this on, the instruct string is rendered
+        into one reference clip on first use and cloned for every segment afterwards.
+        Uploading narrator reference audio for a book always takes precedence.
+      </span>
     </div>
   </section>
 
@@ -357,6 +396,17 @@
         English/Chinese/Japanese: install <code>wetext</code> on Windows (or WeTextProcessing on Linux/macOS).
         Other languages (including Hungarian) use num2words for integers.
         Changing this creates new audio cache entries for affected segments.
+      </span>
+    </div>
+    <div class="setting-row">
+      <label>Pronunciation dictionary</label>
+      <div id="pronunciation-dict"></div>
+      <span class="muted" style="font-size:.78rem">
+        Rewrites names only in the text sent to the model — the book on screen is untouched.
+        The written form matches with any suffix attached, so <code>Westeros → Veszterosz</code>
+        also covers “Westerosban” and “Westeros-ban”, and a longer rule wins over a shorter one.
+        These rules apply to every book; a book can add its own in Voice Studio.
+        Editing a rule re-synthesizes the affected segments.
       </span>
     </div>
   </section>
@@ -524,12 +574,8 @@
     <span id="save-hint" class="status-hint"></span>
   </div>
 </div>
-
-<div id="settings-unsaved-banner" class="settings-unsaved-banner hidden" role="status" aria-live="polite">
-  <span><strong>Unsaved changes.</strong> Save Settings before leaving this page.</span>
-  <button class="btn btn-primary btn-sm" type="button" onclick="saveSettings()">Save Settings</button>
-</div>
 {% endblock %}
 {% block scripts %}
+<script src="/static/js/lexicon_table.js"></script>
 <script src="/static/js/settings.js"></script>
 {% endblock %}

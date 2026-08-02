@@ -1115,6 +1115,11 @@ code {
 .char-card-footer {
   display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap;
 }
+/* A card ends with its action row: Save covers every field above it, so it
+   needs the same separation the sections have from each other. */
+.card-actions {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+}
 .instruct-preview {
   font-size: 0.72rem; color: var(--accent2);
   font-family: 'Courier New', monospace; flex: 1;
@@ -1158,8 +1163,11 @@ code {
   display: grid; grid-template-columns: 210px minmax(0, 1fr);
   gap: 24px; align-items: start;
 }
+.settings-side {
+  position: sticky; top: 78px; display: flex; flex-direction: column; gap: 12px;
+}
 .settings-nav {
-  position: sticky; top: 78px; display: flex; flex-direction: column;
+  display: flex; flex-direction: column;
   gap: 5px; padding: 7px; background: var(--card);
   border: 1px solid var(--border); border-radius: var(--radius);
 }
@@ -1258,23 +1266,25 @@ code {
 }
 
 .settings-unsaved-banner {
-  position: fixed; z-index: 30; left: 50%; bottom: 18px;
-  transform: translateX(-50%); display: flex; align-items: center; gap: 16px;
-  max-width: calc(100vw - 32px); padding: 10px 12px 10px 16px;
-  background: var(--card); color: var(--text); border: 1px solid var(--accent);
-  border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
-  font-size: .82rem;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 12px 14px; background: var(--card); color: var(--text2);
+  border: 1px solid var(--accent); border-left-width: 2px;
+  border-radius: var(--radius); font-size: .78rem; line-height: 1.45;
 }
+.settings-unsaved-banner .btn { align-self: stretch; }
 .settings-unsaved-banner strong { color: var(--accent); }
 
-@media (max-width: 520px) {
-  .settings-unsaved-banner { bottom: 12px; gap: 10px; padding-left: 12px; }
+@media (max-width: 760px) {
+  /* Stacked layout: keep the notice compact above the panels. */
+  .settings-unsaved-banner { flex-direction: row; align-items: center; }
+  .settings-unsaved-banner .btn { align-self: auto; flex: 0 0 auto; }
 }
 
 @media (max-width: 760px) {
   .settings-layout { display: block; }
+  .settings-side { position: static; margin-bottom: 16px; }
   .settings-nav {
-    position: static; flex-direction: row; overflow-x: auto;
+    flex-direction: row; overflow-x: auto;
     margin-bottom: 16px; padding: 5px; scrollbar-width: thin;
   }
   .settings-nav-item {
@@ -1584,3 +1594,94 @@ code {
     flex: 1 0 auto;
   }
 }
+
+/* ── Pronunciation dictionary editor ─────────────────────────────────────────── */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
+.lexicon-editor { display: flex; flex-direction: column; gap: 9px; }
+.lexicon-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lexicon-filter {
+  position: relative; flex: 1 1 190px; min-width: 150px;
+  display: flex; align-items: center;
+}
+.lexicon-filter-icon {
+  position: absolute; left: 9px; color: var(--text3);
+  font-size: .8rem; pointer-events: none;
+}
+.lexicon-filter-input {
+  width: 100%; padding: 6px 10px 6px 26px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  font: .78rem var(--ui-font); transition: border-color .15s;
+}
+.lexicon-filter-input:focus { outline: none; border-color: var(--accent); }
+.lexicon-filter-input::-webkit-search-cancel-button { filter: grayscale(1) opacity(.6); }
+.lexicon-count {
+  color: var(--text3); font-size: .7rem; letter-spacing: .07em;
+  text-transform: uppercase; font-variant-numeric: tabular-nums;
+}
+.lexicon-toolbar .lexicon-sort { margin-left: auto; }
+
+.lexicon-table-wrap {
+  max-height: 320px; overflow: auto;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg3);
+}
+.lexicon-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+.lexicon-table th {
+  position: sticky; top: 0; z-index: 1;
+  padding: 7px 10px; text-align: left; font-weight: normal;
+  color: var(--text3); font-size: .65rem; letter-spacing: .1em; text-transform: uppercase;
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+}
+.lexicon-table th:last-child { width: 34px; }
+.lexicon-table td { padding: 0; border-bottom: 1px solid var(--border); }
+.lexicon-table tbody tr:last-child td { border-bottom: 0; }
+.lexicon-table tbody tr:hover { background: var(--bg2); }
+
+/* Cells read as text until touched, so a long list stays scannable. */
+.lexicon-cell {
+  width: 100%; padding: 7px 10px;
+  background: transparent; color: var(--text);
+  border: 1px solid transparent; border-radius: 3px;
+  font: .78rem var(--ui-font); transition: border-color .12s, background .12s;
+}
+.lexicon-cell:hover { border-color: var(--border); }
+.lexicon-cell:focus {
+  outline: none; border-color: var(--accent); background: var(--bg);
+}
+.lexicon-table td:nth-child(2) .lexicon-cell { color: var(--accent); }
+
+.lexicon-row-actions { text-align: center; }
+.lexicon-remove {
+  width: 22px; height: 22px; line-height: 1;
+  background: none; border: 0; border-radius: 3px; cursor: pointer;
+  color: var(--text3); font-size: 1rem;
+  opacity: 0; transition: opacity .12s, color .12s, background .12s;
+}
+tr:hover .lexicon-remove,
+.lexicon-remove:focus-visible { opacity: 1; }
+.lexicon-remove:hover { color: #c88080; background: var(--bg); }
+.lexicon-remove:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* A repeated written form never reaches the model: the first rule wins. */
+.lexicon-duplicate td:first-child { box-shadow: inset 2px 0 0 #c88080; }
+.lexicon-duplicate .lexicon-cell[data-field="source"] { color: #c88080; }
+
+.lexicon-empty {
+  padding: 14px 12px; color: var(--text3);
+  font: .78rem/1.5 var(--ui-font); text-align: center;
+}
+
+/* ── Words carrying a pronunciation rule ─────────────────────────────────────── */
+/* Only the matched part is underlined; punctuation around it stays clean. */
+.pron-term {
+  text-decoration: underline dotted var(--accent2);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.word.has-pron:hover .pron-term { text-decoration-color: var(--accent); }
+#pron-marks-toggle.active { color: var(--accent); border-color: var(--accent2); }
+.pron-toggle-glyph { text-decoration: underline dotted; text-underline-offset: 2px; }

@@ -25,7 +25,18 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
-from core.tts_engine import AUDIO_CACHE_DIR, SAMPLE_RATE, _write_audio_atomic, apply_text_normalization
+from core import tts_engine as _omnivoice
+from core.pronunciation import apply_pronunciation, lexicon_version
+from core.tts_engine import (
+    AUDIO_CACHE_DIR,
+    SAMPLE_RATE,
+    _audio_zcr,
+    _voice_design_ref_language,
+    _voice_design_ref_text,
+    _voice_lock_enabled,
+    _write_audio_atomic,
+    apply_text_normalization,
+)
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +46,10 @@ REFERENCE_EXPAND_IF_SHORTER_SECONDS = 2.0
 REFERENCE_EXPAND_TARGET_SECONDS = 4.0
 HIGGS_CACHE_VERSION = 6
 HIGGS_MODEL_INIT_SEED = 123
+# Higgs picks the speaker while it decodes, so with the default random seed
+# every segment is read by a different voice. The locked narrator clip is
+# rendered once with this seed and cloned for every segment afterwards.
+HIGGS_VOICE_LOCK_SEED = 20260101
 
 _OMNIVOICE_TAGS = {
     "laughter": "<|sfx:laughter|>Haha",
@@ -370,6 +385,7 @@ class HiggsTTSEngine:
         language: str | None = None,
         normalize_text: bool = False,
         num_step: int = 0,
+        lexicon: str | None = None,
     ) -> str:
         controls = (
             _setting("higgs_prompt_mode", "raw"),
@@ -380,7 +396,8 @@ class HiggsTTSEngine:
         generation = cls._generation_settings()
         payload = (
             f"higgs-v{HIGGS_CACHE_VERSION}|{text}|{instruct}|{ref_audio}|{ref_text}|{speed:.3f}|"
-            f"{language or ''}|nt={int(bool(normalize_text))}|{controls}|{generation}"
+            f"{language or ''}|nt={int(bool(normalize_text))}|{controls}|{generation}|"
+            f"lex={lexicon_version(lexicon)}"
         )
         return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
@@ -395,8 +412,9 @@ class HiggsTTSEngine:
         speed: float,
         language: str | None,
         normalize_text: bool,
+        lexicon: str | None = None,
     ) -> str:
-        text = _language_cleanup(text, language)
+        text = apply_pronunciation(_language_cleanup(text, language), lexicon)
         prompt_mode = str(_setting("higgs_prompt_mode", "raw") or "raw").lower()
         if prompt_mode == "raw":
             # Match source/higgs-tts-3-4b/app.py's default compose_prompt path:
@@ -454,11 +472,14 @@ class HiggsTTSEngine:
         speed: float,
         language: str | None,
         normalize_text: bool,
+        seed: int | None = None,
+        lexicon: str | None = None,
     ) -> np.ndarray:
         if not self._ready or self._worker is None:
             raise RuntimeError("Higgs TTS is not loaded. " + (self._error or "Load it first."))
         settings = self._generation_settings()
-        seed = settings.pop("seed")
+        configured_seed = settings.pop("seed")
+        seed = configured_seed if seed is None else int(seed)
         reference_path = ref_audio
         if ref_audio:
             if not os.path.exists(ref_audio):
@@ -469,7 +490,7 @@ class HiggsTTSEngine:
                 handle, reference_path = tempfile.mkstemp(suffix=".wav", prefix="auris-higgs-ref-")
                 os.close(handle)
                 sf.write(reference_path, processed, int(sr))
-        prompt = self._prompt(text, instruct, speed, language, normalize_text)
+        prompt = self._prompt(text, instruct, speed, language, normalize_text, lexicon)
         handle, output_path = tempfile.mkstemp(suffix=".wav", prefix="auris-higgs-out-")
         os.close(handle)
         try:
@@ -501,6 +522,77 @@ class HiggsTTSEngine:
                     except OSError:
                         pass
 
+    def _voice_identity(self, instruct: str | None, language: str | None) -> str:
+        return (
+            f"higgs|{instruct or ''}|{_voice_design_ref_language(language)}|"
+            f"{self._resolved_model or ''}|{_setting('higgs_prompt_mode', 'raw')}"
+        )
+
+    def _voice_ref_path(self, instruct: str | None, language: str | None) -> str:
+        digest = hashlib.md5(
+            self._voice_identity(instruct, language).encode("utf-8")
+        ).hexdigest()
+        return os.path.join(_omnivoice.VOICE_REF_DIR, f"higgs_{digest}.wav")
+
+    def _voice_lock_seed(self, instruct: str | None, language: str | None) -> int:
+        """Seed for the narrator clip, derived from the narrator description.
+
+        In ``raw`` prompt mode the instruct never reaches the model, so a
+        constant seed would give every book the same speaker with no way to
+        change it. Deriving the seed from the description keeps the voice
+        reproducible while letting an edited instruct pick a different one.
+        """
+        digest = hashlib.md5(
+            self._voice_identity(instruct, language).encode("utf-8")
+        ).hexdigest()
+        return (HIGGS_VOICE_LOCK_SEED + int(digest[:8], 16)) % 2_147_483_647
+
+    def _ensure_locked_voice(
+        self, instruct: str | None, language: str | None
+    ) -> tuple[str, str]:
+        """Render the narrator clip once, then reuse it as the clone source."""
+        ref_path = self._voice_ref_path(instruct, language)
+        ref_text = _voice_design_ref_text(language)
+        if os.path.exists(ref_path):
+            return ref_path, ref_text
+
+        log.info("Rendering locked Higgs narrator voice (%s)", language or "default")
+        audio = self._synthesize(
+            ref_text,
+            instruct,
+            None,
+            None,
+            1.0,
+            language,
+            False,
+            seed=self._voice_lock_seed(instruct, language),
+        )
+        if len(audio) == 0 or _audio_zcr(audio) <= 0:
+            raise RuntimeError("Higgs returned no usable audio for the narrator clip")
+
+        os.makedirs(_omnivoice.VOICE_REF_DIR, exist_ok=True)
+        _write_audio_atomic(ref_path, audio, self._sample_rate)
+        return ref_path, ref_text
+
+    def _resolve_voice(
+        self,
+        instruct: str | None,
+        ref_audio: str | None,
+        ref_text: str | None,
+        language: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Pin the narrator to one voice unless a real reference was supplied."""
+        if ref_audio or not _voice_lock_enabled():
+            return ref_audio, ref_text
+        try:
+            return self._ensure_locked_voice(instruct, language)
+        except Exception as exc:
+            log.warning(
+                "Higgs voice lock unavailable (%s); each segment keeps its own voice.",
+                exc,
+            )
+            return ref_audio, ref_text
+
     def generate(
         self,
         text: str,
@@ -511,9 +603,11 @@ class HiggsTTSEngine:
         num_step: int | None = None,
         language: str | None = None,
         normalize_text: bool | None = None,
+        lexicon: str | None = None,
     ) -> dict:
         if normalize_text is None:
             normalize_text = bool(_setting("normalize_text", True))
+        ref_audio, ref_text = self._resolve_voice(instruct, ref_audio, ref_text, language)
         key = self.cache_key(
             text,
             instruct,
@@ -522,6 +616,7 @@ class HiggsTTSEngine:
             ref_text=ref_text,
             language=language,
             normalize_text=bool(normalize_text),
+            lexicon=lexicon,
         )
         path = self.cache_path(key)
         if os.path.exists(path):
@@ -533,7 +628,8 @@ class HiggsTTSEngine:
                 "cache_key": key,
             }
         audio = self._synthesize(
-            text, instruct, ref_audio, ref_text, speed, language, bool(normalize_text)
+            text, instruct, ref_audio, ref_text, speed, language, bool(normalize_text),
+            lexicon=lexicon,
         )
         sample_rate = self._sample_rate
         _write_audio_atomic(path, audio, sample_rate)
@@ -565,6 +661,7 @@ class HiggsTTSEngine:
                 speed=float(item.get("speed") or 1.0),
                 language=item.get("language"),
                 normalize_text=item.get("normalize_text"),
+                lexicon=item.get("lexicon"),
             )
             results.append(result)
             if on_item is not None:

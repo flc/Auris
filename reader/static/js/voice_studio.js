@@ -193,11 +193,6 @@ async function loadCharacters() {
             ${buildSelect(PITCHES, v.pitch, `p-${ch.id}`)}
             ${buildSelect(ACCENTS, v.accent, `ac-${ch.id}`)}
           </div>
-          <div class="char-card-footer">
-            <span class="instruct-preview" id="ins-${ch.id}">${esc(ch.instruct)}</span>
-            <button class="btn btn-sm btn-ghost preview-btn" onclick="previewChar(${ch.id})">&#9654; Preview</button>
-            <button class="btn btn-sm btn-primary" onclick="saveChar(${ch.id})">Save</button>
-          </div>
           <div class="clone-section">
             <div id="ref-status-${ch.id}" class="reference-status${ch.ref_audio_path ? "" : " hidden"}">
               <span class="reference-status-label">Active reference:</span>
@@ -220,6 +215,11 @@ async function loadCharacters() {
               <button id="remove-ref-${ch.id}" class="btn btn-sm btn-ghost" type="button" onclick="removeRef(${ch.id})"${ch.ref_audio_path ? "" : " disabled"}>Remove reference</button>
             </div>
             <div class="studio-note">Best results: a clean, single-speaker, 3–10 second clip in the target language.</div>
+          </div>
+          <div class="char-card-footer card-actions">
+            <span class="instruct-preview" id="ins-${ch.id}">${esc(ch.instruct)}</span>
+            <button class="btn btn-sm btn-ghost preview-btn" onclick="previewChar(${ch.id})">&#9654; Preview</button>
+            <button class="btn btn-sm btn-primary" onclick="saveChar(${ch.id})">Save character</button>
           </div>
         </div>
       </div>`;
@@ -375,10 +375,16 @@ async function removeNarratorRef() {
 async function saveNarrator() {
   const instruct = updateNarratorPreview();
   const refText = document.getElementById("narrator-ref-text")?.value.trim() || "";
+  const lexicon = bookLexiconTable ? bookLexiconTable.value() : "";
   const r = await fetch(`/api/books/${BOOK_ID}/narrator`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ instruct, single_narrator_mode: singleNarratorMode, ref_text: refText }),
+    body: JSON.stringify({
+      instruct,
+      single_narrator_mode: singleNarratorMode,
+      ref_text: refText,
+      pronunciation_dict: lexicon,
+    }),
   });
   const d = await r.json();
   if (d.ok) {
@@ -410,6 +416,12 @@ async function previewNarrator() {
 document.querySelector('.preview-btn[data-char-id="narrator"]').onclick = previewNarrator;
 
 initNarratorControls();
+
+// Rules stay unsaved until Save, same as the rest of the narrator card.
+const bookLexiconTable = createLexiconTable(
+  document.getElementById("book-pronunciation-dict"),
+  { value: window.BOOK_PRONUNCIATION || "" },
+);
 document.getElementById("chapter-character-filter")?.addEventListener("change", loadCharacters);
 loadCharacters();
 

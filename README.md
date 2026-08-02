@@ -42,6 +42,10 @@ Everything runs locally after setup. No API keys. No hosted TTS dependency.
 - `ffmpeg` on `PATH` for MP3 export
 - OmniVoice model files stored locally
 - Optional NVIDIA GPU for faster inference
+- On Linux / WSL with an NVIDIA GPU: a C compiler and the CPython headers
+  (`sudo apt install -y build-essential python3-dev`). Triton, which the CUDA
+  build of PyTorch depends on, compiles kernels on first use — without these,
+  install and model load both succeed and only TTS playback fails.
 
 ## Installation
 

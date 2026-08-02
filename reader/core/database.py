@@ -140,6 +140,10 @@ def init_db():
             conn.execute("ALTER TABLE books ADD COLUMN narrator_ref_audio_name TEXT")
         if "narrator_ref_text" not in cols:
             conn.execute("ALTER TABLE books ADD COLUMN narrator_ref_text TEXT")
+        if "pronunciation_dict" not in cols:
+            # Per-book pronunciation rules; they extend (and override) the
+            # global lexicon in settings.
+            conn.execute("ALTER TABLE books ADD COLUMN pronunciation_dict TEXT")
         if "character_analysis_status" not in cols:
             conn.execute(
                 "ALTER TABLE books ADD COLUMN character_analysis_status TEXT DEFAULT 'pending'"
